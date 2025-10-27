@@ -1,0 +1,432 @@
+# ============================================================================
+# application-dev.yml - Configuración de DESARROLLO
+# ============================================================================
+# Este archivo contiene la configuración para el entorno de desarrollo local
+# Usar: java -jar app.jar --spring.profiles.active=dev
+# ============================================================================
+
+spring:
+  application:
+    name: integracion-epagos-dev
+
+  # ==========================================================================
+  # BASE DE DATOS H2 - CACHÉ PRIMARIO (EN MEMORIA)
+  # ==========================================================================
+  datasource:
+    # H2 en memoria para desarrollo
+    url: jdbc:h2:mem:infracciones_cache;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+    # Pool de conexiones HikariCP
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: H2-Cache-Pool-DEV
+
+  # Habilitar consola H2 para debugging (solo desarrollo)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
+
+  # ==========================================================================
+  # CONFIGURACIÓN JPA/HIBERNATE
+  # ==========================================================================
+  jpa:
+    # Mostrar SQL en desarrollo (útil para debugging)
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        # create-drop: Crea tablas al iniciar, elimina al cerrar (perfecto para H2)
+        ddl-auto: create-drop
+        dialect: org.hibernate.dialect.H2Dialect
+
+        # Logging de SQL
+        use_sql_comments: true
+
+        # Optimizaciones
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  # ==========================================================================
+  # CONFIGURACIÓN DE SERVIDOR WEB
+  # ==========================================================================
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  # Timeout de request
+  connection-timeout: 60000
+
+# ============================================================================
+# BASES DE DATOS POSTGRESQL - PROVINCIALES (DESARROLLO)
+# ============================================================================
+postgresql:
+  datasources:
+    # Provincia de Buenos Aires (PBA)
+    pba:
+      jdbc-url: ${PBA_URL}
+      username: ${PBA_USERNAME}
+      password: ${PBA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        idle-timeout: 600000
+        pool-name: PBA-Pool-DEV
+
+    # Mar del Plata (MDA)
+    mda:
+      jdbc-url: ${MDA_URL}
+      username: ${MDA_USERNAME}
+      password: ${MDA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        pool-name: MDA-Pool-DEV
+
+    # Santa Rosa (La Pampa)
+    santa-rosa:
+      jdbc-url: ${SANTA_ROSA_URL}
+      username: ${SANTA_ROSA_USERNAME}
+      password: ${SANTA_ROSA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        pool-name: SantaRosa-Pool-DEV
+
+    # Chaco
+    chaco:
+      jdbc-url: ${CHACO_URL}
+      username: ${CHACO_USERNAME}
+      password: ${CHACO_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        pool-name: Chaco-Pool-DEV
+
+    # Entre Ríos
+    entre-rios:
+      jdbc-url: ${ENTRE_RIOS_URL}
+      username: ${ENTRE_RIOS_USERNAME}
+      password: ${ENTRE_RIOS_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        pool-name: EntreRios-Pool-DEV
+
+    # Formosa
+    formosa:
+      jdbc-url: ${FORMOSA_URL}
+      username: ${FORMOSA_USERNAME}
+      password: ${FORMOSA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        pool-name: Formosa-Pool-DEV
+
+# ============================================================================
+# CONFIGURACIÓN E-PAGOS (DESARROLLO - URL DE TESTING)
+# ============================================================================
+epagos:
+  soap:
+    # URL de testing de e-Pagos (si existe, sino usar producción)
+    url: https://testing.epagos.com/svc/wsespeciales.asmx
+
+    # Credenciales de testing proporcionadas por e-Pagos
+    usuario: usuario_testing
+    clave: clave_testing_123
+
+    # Timeouts más cortos en desarrollo
+    connection-timeout: 30000   # 30 segundos
+    read-timeout: 60000         # 60 segundos
+
+# ============================================================================
+# CONFIGURACIÓN DE LOGGING
+# ============================================================================
+logging:
+  level:
+    root: INFO
+    org.transito_seguro: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    org.springframework.ws: DEBUG
+    org.apache.http: DEBUG
+    com.zaxxer.hikari: DEBUG
+
+  # Archivo de logs
+  file:
+    name: logs/integracion-epagos-dev.log
+
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# ============================================================================
+# CONFIGURACIÓN DE TAREAS PROGRAMADAS (Deshabilitadas en desarrollo)
+# ============================================================================
+scheduling:
+  enabled: false  # No ejecutar tareas automáticas en desarrollo
+
+---
+
+# ============================================================================
+# application-prod.yml - Configuración de PRODUCCIÓN
+# ============================================================================
+# Este archivo contiene la configuración para el entorno de producción
+# Usar: java -jar app.jar --spring.profiles.active=prod
+#
+# IMPORTANTE: Todas las credenciales se leen desde VARIABLES DE ENTORNO
+# ============================================================================
+
+spring:
+  application:
+    name: integracion-epagos-prod
+
+  # ==========================================================================
+  # BASE DE DATOS H2 - CACHÉ PRIMARIO (EN MEMORIA)
+  # ==========================================================================
+  datasource:
+    # H2 en memoria para producción (configuración optimizada)
+    url: jdbc:h2:mem:infracciones_cache;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+    # Pool optimizado para producción
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: H2-Cache-Pool-PROD
+      leak-detection-threshold: 60000
+
+  # Consola H2 DESHABILITADA en producción
+  h2:
+    console:
+      enabled: false
+
+  # ==========================================================================
+  # CONFIGURACIÓN JPA/HIBERNATE
+  # ==========================================================================
+  jpa:
+    # NO mostrar SQL en producción
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        # create-drop en producción también porque H2 es caché temporal
+        ddl-auto: create-drop
+        dialect: org.hibernate.dialect.H2Dialect
+
+        # Optimizaciones de producción
+        jdbc:
+          batch_size: 100
+        order_inserts: true
+        order_updates: true
+
+  # ==========================================================================
+  # CONFIGURACIÓN DE SERVIDOR WEB
+  # ==========================================================================
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  connection-timeout: 60000
+
+  # Compresión de respuestas
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+
+# ============================================================================
+# BASES DE DATOS POSTGRESQL - PROVINCIALES (PRODUCCIÓN)
+# ============================================================================
+# IMPORTANTE: Todas las credenciales se leen desde variables de entorno
+# ============================================================================
+postgresql:
+  datasources:
+    # Provincia de Buenos Aires (PBA)
+    pba:
+      jdbc-url: ${DB_PBA_URL:jdbc:postgresql://db-pba-prod.ejemplo.com:5432/infracciones_pba}
+      username: ${DB_PBA_USERNAME}
+      password: ${DB_PBA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: PBA-Pool-PROD
+        leak-detection-threshold: 60000
+
+    # Mar del Plata (MDA)
+    mda:
+      jdbc-url: ${DB_MDA_URL:jdbc:postgresql://db-mda-prod.ejemplo.com:5432/infracciones_mda}
+      username: ${DB_MDA_USERNAME}
+      password: ${DB_MDA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: MDA-Pool-PROD
+        leak-detection-threshold: 60000
+
+    # Santa Rosa (La Pampa)
+    santa-rosa:
+      jdbc-url: ${DB_SANTAROSA_URL:jdbc:postgresql://db-santarosa-prod.ejemplo.com:5432/infracciones_santarosa}
+      username: ${DB_SANTAROSA_USERNAME}
+      password: ${DB_SANTAROSA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: SantaRosa-Pool-PROD
+        leak-detection-threshold: 60000
+
+    # Chaco
+    chaco:
+      jdbc-url: ${DB_CHACO_URL:jdbc:postgresql://db-chaco-prod.ejemplo.com:5432/infracciones_chaco}
+      username: ${DB_CHACO_USERNAME}
+      password: ${DB_CHACO_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: Chaco-Pool-PROD
+        leak-detection-threshold: 60000
+
+    # Entre Ríos
+    entre-rios:
+      jdbc-url: ${DB_ENTRERIOS_URL:jdbc:postgresql://db-entrerios-prod.ejemplo.com:5432/infracciones_entrerios}
+      username: ${DB_ENTRERIOS_USERNAME}
+      password: ${DB_ENTRERIOS_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: EntreRios-Pool-PROD
+        leak-detection-threshold: 60000
+
+    # Formosa
+    formosa:
+      jdbc-url: ${DB_FORMOSA_URL:jdbc:postgresql://db-formosa-prod.ejemplo.com:5432/infracciones_formosa}
+      username: ${DB_FORMOSA_USERNAME}
+      password: ${DB_FORMOSA_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 10
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: Formosa-Pool-PROD
+        leak-detection-threshold: 60000
+
+# ============================================================================
+# CONFIGURACIÓN E-PAGOS (PRODUCCIÓN)
+# ============================================================================
+epagos:
+  soap:
+    # URL de producción de e-Pagos
+    url: ${EPAGOS_SOAP_URL:https://www.epagos.com/svc/wsespeciales.asmx}
+
+    # Credenciales desde variables de entorno (SEGURIDAD)
+    usuario: ${EPAGOS_USUARIO}
+    clave: ${EPAGOS_CLAVE}
+
+    # Timeouts de producción
+    connection-timeout: 30000   # 30 segundos
+    read-timeout: 120000        # 120 segundos (2 minutos)
+
+# ============================================================================
+# CONFIGURACIÓN DE LOGGING
+# ============================================================================
+logging:
+  level:
+    root: WARN
+    org.transito_seguro: INFO
+    org.hibernate: WARN
+    org.springframework: WARN
+    com.zaxxer.hikari: INFO
+
+  # Archivo de logs con rotación
+  file:
+    name: /var/log/integracion-epagos/application.log
+    max-size: 100MB
+    max-history: 30
+    total-size-cap: 3GB
+
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# ============================================================================
+# CONFIGURACIÓN DE TAREAS PROGRAMADAS (Habilitadas en producción)
+# ============================================================================
+scheduling:
+  enabled: true
+
+  # Horarios de ejecución (cron expressions)
+  sincronizacion:
+    diaria: "0 0 2 * * ?"          # Todos los días a las 2:00 AM
+    contracargos: "0 0 12 * * ?"   # Todos los días a las 12:00 PM
+
+  mantenimiento:
+    semanal: "0 0 3 ? * SUN"       # Domingos a las 3:00 AM
+
+# ============================================================================
+# CONFIGURACIÓN DE ACTUATOR (Monitoreo)
+# ============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+
+  endpoint:
+    health:
+      show-details: when-authorized
+
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
