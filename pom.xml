@@ -168,6 +168,13 @@
             <version>${guava.version}</version>
         </dependency>
 
+        <!-- Apache HttpClient - Para peticiones HTTP -->
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.14</version>
+        </dependency>
+
         <!-- ========================================== -->
         <!-- LOGGING                                    -->
         <!-- ========================================== -->
