@@ -237,7 +237,7 @@
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>runtime</scope>
         </dependency>
 
     </dependencies>
@@ -294,7 +294,7 @@
                 </configuration>
             </plugin>
 
-            <!-- Plugin JAXB2 - Generación de clases desde WSDL -->
+            <!-- Plugin JAXB2 - Generación de clases desde WSDL
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>jaxb2-maven-plugin</artifactId>
@@ -318,7 +318,7 @@
                     </args>
                 </configuration>
                 <dependencies>
-                    <!-- Dependencia necesaria para el plugin -->
+
                     <dependency>
                         <groupId>org.glassfish.jaxb</groupId>
                         <artifactId>jaxb-xjc</artifactId>
@@ -326,6 +326,7 @@
                     </dependency>
                 </dependencies>
             </plugin>
+            -->
 
         </plugins>
     </build>
