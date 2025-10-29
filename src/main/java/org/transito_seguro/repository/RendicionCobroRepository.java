@@ -5,5 +5,5 @@ import org.springframework.stereotype.Repository;
 import org.transito_seguro.entity.RendicionCobro;
 
 @Repository
-public interface RendicionCobroRepository extends JpaRepository<Integer, RendicionCobro> {
+public interface RendicionCobroRepository extends JpaRepository<RendicionCobro,Integer> {
 }

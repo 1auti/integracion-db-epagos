@@ -16,7 +16,7 @@ import java.io.Serializable;
 @Setter
 @AllArgsConstructor
 @NoArgsConstructor
-public class ObtenerTokenRequestDTO implements Serializable {
+public class TokenRequestDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 

@@ -2,6 +2,8 @@ package org.transito_seguro.dto.contracargos;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.io.Serializable;
 import java.time.LocalDate;
@@ -9,6 +11,8 @@ import java.time.LocalDate;
 /**
  * DTO para los filtros de búsqueda de contracargos.
  */
+@Getter
+@Setter
 public class FiltroContracargoDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;

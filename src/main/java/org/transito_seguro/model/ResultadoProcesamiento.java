@@ -1,22 +1,24 @@
 package org.transito_seguro.model;
 
+import lombok.Getter;
+import lombok.Setter;
+import org.transito_seguro.entity.Cobranza;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Getter
+@Setter
 public class ResultadoProcesamiento {
 
     private boolean exitoso;
     private boolean requiereAtencion;
     private String mensajeError;
 
-    // Getters y Setters
-    public boolean isExitoso() { return exitoso; }
-    public void setExitoso(boolean exitoso) { this.exitoso = exitoso; }
+    private final List<Cobranza> cobranzas = new ArrayList<>();
+    private final List<String> huerfanas = new ArrayList<>();
 
-    public boolean isRequiereAtencion() { return requiereAtencion; }
-    public void setRequiereAtencion(boolean requiereAtencion) {
-        this.requiereAtencion = requiereAtencion;
-    }
+    public void agregarCobranza(Cobranza c) { cobranzas.add(c); }
+    public void agregarHuerfana(String h) { huerfanas.add(h); }
 
-    public String getMensajeError() { return mensajeError; }
-    public void setMensajeError(String mensajeError) {
-        this.mensajeError = mensajeError;
-    }
 }

@@ -48,9 +48,8 @@ public class RendicionDTO implements Serializable {
 
     /**
      * Estado de la rendición:
-     * - "Pendiente": Aún no depositada
+     * - "Activa": Aún no depositada
      * - "Depositada": Ya fue depositada
-     * - "Cancelada": Cancelada por algún motivo
      */
     @JsonProperty("Estado")
     private String estado;

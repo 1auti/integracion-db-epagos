@@ -1,12 +1,14 @@
 package org.transito_seguro.dto.contracargos.response;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Getter;
 import org.transito_seguro.dto.contracargos.ContracargoDTO;
 
 import java.io.Serializable;
 import java.util.List;
 
-public class ObtenerContracargosResponseDTO implements Serializable {
+@Getter
+public class ContracargosResponseDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 

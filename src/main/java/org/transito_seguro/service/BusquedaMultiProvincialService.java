@@ -55,9 +55,6 @@ public class BusquedaMultiProvincialService {
     @Autowired
     private ContracargoService contracargoService;
 
-    @Autowired
-    private ActualizacionService actualizacionService;
-
     // Pool de threads para consultas concurrentes
     private final ExecutorService executorService;
 
@@ -245,7 +242,6 @@ public class BusquedaMultiProvincialService {
             // Consultar rendiciones vía servicio de e-pagos
             // Nota: El servicio EpagosClientService encapsula la comunicación SOAP
             List<RendicionDTO> rendiciones = epagosClientService.obtenerRendiciones(
-                    codigoProvincia,
                     FechaUtil.convertirADate(fechaDesde),
                     FechaUtil.convertirADate(fechaHasta)
             );
@@ -284,7 +280,6 @@ public class BusquedaMultiProvincialService {
         try {
             // Consultar contracargos vía servicio de e-pagos
             List<ContracargoDTO> contracargos = epagosClientService.obtenerContracargos(
-                    codigoProvincia,
                     FechaUtil.convertirADate(fechaDesde),
                     FechaUtil.convertirADate(fechaHasta)
             );
@@ -318,10 +313,10 @@ public class BusquedaMultiProvincialService {
         int totalActualizadas = 0;
 
         // Procesar rendiciones
-        totalActualizadas += rendicionService.procesarRendiciones(codigoProvincia, rendiciones);
+        totalActualizadas += rendicionService.procesarRendenciones(codigoProvincia,rendiciones);
 
         // Procesar contracargos
-        totalActualizadas += contracargoService.procesarContracargos(codigoProvincia, contracargos);
+        //totalActualizadas += contracargoService
 
         return totalActualizadas;
     }

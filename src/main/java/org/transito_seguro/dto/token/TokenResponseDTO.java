@@ -1,13 +1,15 @@
 package org.transito_seguro.dto.token;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Getter;
 
 import java.io.Serializable;
 
 /**
  * DTO para la respuesta de obtención de token.
  */
-public class ObtenerTokenResponseDTO implements Serializable {
+@Getter
+public class TokenResponseDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 

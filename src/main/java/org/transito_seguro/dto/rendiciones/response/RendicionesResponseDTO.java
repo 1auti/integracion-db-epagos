@@ -5,8 +5,10 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.transito_seguro.dto.rendiciones.RendicionDTO;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * DTO para la respuesta del servicio de obtención de rendiciones.
@@ -16,7 +18,7 @@ import java.io.Serializable;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class ObtenerRendicionesResponseDTO implements Serializable {
+public class RendicionesResponseDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 

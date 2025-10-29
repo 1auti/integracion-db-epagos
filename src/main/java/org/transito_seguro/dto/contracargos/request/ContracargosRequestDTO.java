@@ -6,12 +6,13 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.transito_seguro.dto.CredencialesDTO;
+import org.transito_seguro.dto.contracargos.FiltroContracargoDTO;
 
 import java.io.Serializable;
 
 /**
  * DTO para la solicitud de obtención de contracargos.
- * Método SOAP: obtener_contracargos
+ * Método JSON: obtener_contracargos
  *
  * Los contracargos son reclamos de usuarios por pagos no reconocidos.
  */
@@ -19,7 +20,7 @@ import java.io.Serializable;
 @Setter
 @AllArgsConstructor
 @NoArgsConstructor
-public class ObtenerContracargosRequestDTO implements Serializable {
+public class ContracargosRequestDTO implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
