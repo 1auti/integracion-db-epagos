@@ -5,24 +5,37 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.transito_seguro.service.ConsultaRendicionesService;
+import org.transito_seguro.service.RendicionService;
 import org.transito_seguro.service.SincronizacionRendicionesService;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-
-/** Scheduler para sincronizacion automatica de rendiciones desde E-PAGOS
+/**
+ * Scheduler para sincronización automática de rendiciones desde e-Pagos.
+ *
  * Este componente ejecuta tareas programadas para:
- * - Sincronizar rendiciones de la ultima semana
- * - Detectar transacciones huerfanas
- * - Generar reporte de sincronizacion
- */
+ * - Sincronizar rendiciones de la última semana (diario/semanal)
+ * - Detectar transacciones huérfanas
+ * - Generar reportes de sincronización
+ *
+ * Configuración mediante propiedades:
+ * - sincronizacion.rendiciones.enabled: Activa/desactiva el scheduler
+ * - sincronizacion.rendiciones.dias-atras: Días hacia atrás para consultar
+*/
 @Component
 @Slf4j
 public class SincronizacionScheduler {
 
     @Autowired
-    private SincronizacionRendicionesService sincronizacionService;
+    private ConsultaRendicionesService consultaService;
+
+    @Autowired
+    private RendicionService rendicionService;
+
+    @Autowired
+    private SincronizacionRendicionesService sincronizacionRendicionesService;
 
     /**
      * Activa/desactiva la ejecución del scheduler.
@@ -100,7 +113,7 @@ public class SincronizacionScheduler {
                 log.info("→ Procesando provincia: {}", codigoProvincia);
 
                 try {
-                    int actualizadas = sincronizacionService.sincronizarRendiciones(
+                    int actualizadas = sincronizacionRendicionesService.sincronizarRendiciones(
                             codigoProvincia,
                             diasAtras
                     );
@@ -174,7 +187,7 @@ public class SincronizacionScheduler {
                 log.info("→ Sincronización semanal para provincia: {}", codigoProvincia);
 
                 try {
-                    int actualizadas = sincronizacionService.sincronizarRendiciones(
+                    int actualizadas = sincronizacionRendicionesService.sincronizarRendiciones(
                             codigoProvincia,
                             diasSemanal
                     );
@@ -219,7 +232,7 @@ public class SincronizacionScheduler {
 
         try {
             // Verificar conectividad básica
-            boolean sistemaDisponible = sincronizacionService.verificarConectividad();
+            boolean sistemaDisponible = sincronizacionRendicionesService.verificarConectividad();
 
             if (!sistemaDisponible) {
                 log.warn("⚠ ALERTA: Sistema e-Pagos no responde correctamente");
@@ -260,6 +273,4 @@ public class SincronizacionScheduler {
         this.schedulerEnabled = false;
         log.warn("✗ Scheduler de rendiciones DESHABILITADO");
     }
-
-
 }

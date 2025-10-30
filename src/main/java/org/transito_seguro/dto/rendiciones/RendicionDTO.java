@@ -6,6 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.transito_seguro.dto.contracargos.ContracargoDTO;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -135,6 +136,9 @@ public class RendicionDTO implements Serializable {
      */
     @JsonProperty("Detalles")
     private List<DetalleRendicionDTO> detalles;
+
+    @JsonProperty("Contracargos")
+    private List<ContracargoDTO> contracargos;
 
 
     @Override
