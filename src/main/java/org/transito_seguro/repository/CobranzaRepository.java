@@ -5,15 +5,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.transito_seguro.entity.Cobranza;
-
 import java.util.List;
 
 @Repository
 public interface CobranzaRepository extends JpaRepository<Cobranza,Integer> {
-
-    Cobranza findBynumero_transaccion(String numero_transaccion);
-
-
 
     /**
      * Busca cobranzas por múltiples números de transacción

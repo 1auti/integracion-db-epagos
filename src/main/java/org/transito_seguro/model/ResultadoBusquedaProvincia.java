@@ -11,13 +11,20 @@ import lombok.Setter;
 public class ResultadoBusquedaProvincia {
     private String codigoProvincia;
     private boolean exitoso;
+
     private int rendicionesEncontradas;
     private int contracargosEncontrados;
+
+    private int rendicioncesProcesados;
+    private int contracargosProcesados;
+
     private int infraccionesActualizadas;
     private String mensajeError;
 
     public ResultadoBusquedaProvincia(String codigoProvincia) {
         this.codigoProvincia = codigoProvincia;
     }
+
+
 
 }

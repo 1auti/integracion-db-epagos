@@ -12,6 +12,7 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class ResultadoBusquedaMultiprovincial {
+
     private List<ResultadoBusquedaProvincia> resultadosPorProvincia;
     private int totalProvinciasConsultadas;
     private int provinciasExitosas;

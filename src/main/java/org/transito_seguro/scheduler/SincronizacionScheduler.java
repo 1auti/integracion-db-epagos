@@ -5,47 +5,61 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.transito_seguro.service.ConsultaRendicionesService;
-import org.transito_seguro.service.RendicionService;
-import org.transito_seguro.service.SincronizacionRendicionesService;
-
+import org.transito_seguro.model.ResultadoBusquedaMultiprovincial;
+import org.transito_seguro.model.ResultadoSincronizacion;
+import org.transito_seguro.service.BusquedaMultiProvincialService;
+import org.transito_seguro.service.SincronizacionService;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.List;
 
 /**
- * Scheduler para sincronización automática de rendiciones desde e-Pagos.
- *
- * Este componente ejecuta tareas programadas para:
- * - Sincronizar rendiciones de la última semana (diario/semanal)
- * - Detectar transacciones huérfanas
- * - Generar reportes de sincronización
- *
- * Configuración mediante propiedades:
+ * Scheduler para sincronización automática con e-Pagos.
+ * FLUJO ACTUALIZADO:
+ * 1. Scheduler (cron job) - ESTE COMPONENTE
+ *     ↓
+ * 2. SincronizacionService (coordinador estratégico)
+ *     ↓
+ * 3. Para cada provincia:
+ *    - EpagosClientService → Obtiene rendiciones y contracargos
+ *    - RendicionService → Actualiza cobranzas en BD
+ *    - ContracargoService → Registra contracargos en BD
+ * MODOS DE OPERACIÓN:
+ * - Paralelo: Procesa provincias simultáneamente
+ * CONFIGURACIÓN:
+ * Todas las configuraciones se gestionan desde application.yml:
  * - sincronizacion.rendiciones.enabled: Activa/desactiva el scheduler
  * - sincronizacion.rendiciones.dias-atras: Días hacia atrás para consultar
-*/
+ * - sincronizacion.rendiciones.provincias: Lista de provincias a procesar
+ */
 @Component
 @Slf4j
 public class SincronizacionScheduler {
 
-    @Autowired
-    private ConsultaRendicionesService consultaService;
 
+    /**
+     * Servicio coordinador principal de sincronización.
+     * Responsabilidad: Orquestar todo el flujo de sincronización
+     */
     @Autowired
-    private RendicionService rendicionService;
+    private SincronizacionService sincronizacionService;
 
+    /**
+     * Servicio de búsqueda multiprovincial (modo paralelo).
+     * Responsabilidad: Procesar múltiples provincias concurrentemente
+     */
     @Autowired
-    private SincronizacionRendicionesService sincronizacionRendicionesService;
+    private BusquedaMultiProvincialService busquedaMultiProvincialService;
 
     /**
      * Activa/desactiva la ejecución del scheduler.
-     * Configurable desde application.yml
      */
     @Value("${sincronizacion.rendiciones.enabled:true}")
     private boolean schedulerEnabled;
 
     /**
-     * Días hacia atrás para consultar rendiciones.
+     * Días hacia atrás para consultar.
      * Por defecto: 7 días (1 semana)
      */
     @Value("${sincronizacion.rendiciones.dias-atras:7}")
@@ -53,175 +67,151 @@ public class SincronizacionScheduler {
 
     /**
      * Códigos de provincia a sincronizar, separados por comas.
-     * Ejemplo: "PBA,MDA,CHACO"
+     * Ejemplo: "PBA,MDA,CHACO,ENTRERIOS,FORMOSA,SANTAROSA"
      */
-    @Value("${sincronizacion.rendiciones.provincias:PBA}")
+    @Value("${sincronizacion.rendiciones.provincias:PBA,MDA,CHACO}")
     private String[] provincias;
+
+    /**
+     * Modo de procesamiento: "paralelo" o "secuencial"
+     * Por defecto: secuencial (más estable)
+     */
+    @Value("${sincronizacion.rendiciones.modo:secuencial}")
+    private String modoProcesamiento;
 
     // Formatter para logs
     private static final DateTimeFormatter FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     // ========================================================================
-    // SINCRONIZACIÓN DIARIA DE RENDICIONES
+    // SINCRONIZACIÓN DIARIA AUTOMÁTICA
     // ========================================================================
 
     /**
-     * Job programado para sincronización DIARIA de rendiciones.
+     * Job programado para sincronización DIARIA de TODAS las provincias.
      *
-     * Se ejecuta todos los días a las 2:00 AM (hora Argentina).
-     * Consulta las rendiciones de los últimos N días configurados.
+     * EXPRESIÓN CRON:
+     * "0 0 2 * * ?" = Todos los días a las 2:00 AM
+     * - 0: segundo 0
+     * - 0: minuto 0
+     * - 2: hora 2 AM
+     * - *: cualquier día del mes
+     * - *: cualquier mes
+     * - ?: cualquier día de la semana
      *
-     * Expresión Cron: "0 0 2 * * ?"
-     * - Segundo: 0
-     * - Minuto: 0
-     * - Hora: 2 (2 AM)
-     * - Día del mes: * (todos)
-     * - Mes: * (todos)
-     * - Día de la semana: ? (cualquiera)
+     * PROCESO:
+     * 1. Verificar si el scheduler está habilitado
+     * 2. Ejecutar sincronización
+     * 3. Registrar métricas y resultados
      *
-     * Esta sincronización es INCREMENTAL:
-     * - Solo consulta los últimos N días
-     * - Actualiza solo las rendiciones nuevas o modificadas
-     * - Evita consultas masivas innecesarias
+     * CONFIGURACIÓN DESDE application.yml:
+     * sincronizacion.rendiciones.cron: Permite cambiar el horario
+     * Ejemplo: "0 0 3 * * ?" = 3:00 AM
      */
     @Scheduled(cron = "${sincronizacion.rendiciones.cron:0 0 2 * * ?}")
-    public void sincronizarRendicionesDiario() {
+    public void sincronizarAutomatico() {
 
         // Validar si el scheduler está habilitado
         if (!schedulerEnabled) {
-            log.debug("Scheduler de rendiciones deshabilitado. " +
+            log.debug("Scheduler deshabilitado. " +
                     "Configurar 'sincronizacion.rendiciones.enabled=true'");
             return;
         }
 
         log.info("╔═══════════════════════════════════════════════════════════════╗");
-        log.info("║  INICIO - SINCRONIZACIÓN AUTOMÁTICA DE RENDICIONES          ║");
+        log.info("║  SINCRONIZACIÓN AUTOMÁTICA - INICIO                           ║");
         log.info("╠═══════════════════════════════════════════════════════════════╣");
-        log.info("║  Fecha/Hora: {}                              ║",
+        log.info("║  Fecha/Hora:   {}                                             ║",
                 LocalDateTime.now().format(FORMATTER));
-        log.info("║  Rango: últimos {} días                                      ║", diasAtras);
-        log.info("║  Provincias: {}                                              ║",
-                String.join(", ", provincias));
+        log.info("║  Rango:        últimos {} días                                ║",
+                diasAtras);
+        log.info("║  Provincias:   {} ({})                                        ║",
+                provincias.length, String.join(", ", provincias));
+        log.info("║  Modo:         {}                                             ║",
+                modoProcesamiento.toUpperCase());
+        log.info("║  Sincroniza:   RENDICIONES + CONTRACARGOS                     ║");
         log.info("╚═══════════════════════════════════════════════════════════════╝");
 
+        long tiempoInicio = System.currentTimeMillis();
+
         try {
-            // Ejecutar sincronización para cada provincia configurada
-            int totalActualizadas = 0;
+            sincronizarEnParalelo();
 
-            for (String codigoProvincia : provincias) {
-                log.info("→ Procesando provincia: {}", codigoProvincia);
+            long duracion = System.currentTimeMillis() - tiempoInicio;
 
-                try {
-                    int actualizadas = sincronizacionRendicionesService.sincronizarRendiciones(
-                            codigoProvincia,
-                            diasAtras
-                    );
-
-                    totalActualizadas += actualizadas;
-                    log.info("✓ Provincia {} procesada: {} cobranzas actualizadas",
-                            codigoProvincia, actualizadas);
-
-                } catch (Exception e) {
-                    log.error("✗ Error al sincronizar provincia {}: {}",
-                            codigoProvincia, e.getMessage(), e);
-                    // Continuar con las demás provincias
-                }
-            }
-
-            // Resumen final
             log.info("╔═══════════════════════════════════════════════════════════════╗");
-            log.info("║  FIN - SINCRONIZACIÓN COMPLETADA                            ║");
+            log.info("║  SINCRONIZACIÓN AUTOMÁTICA - COMPLETADA                       ║");
             log.info("╠═══════════════════════════════════════════════════════════════╣");
-            log.info("║  Total cobranzas actualizadas: {}                           ║",
-                    totalActualizadas);
-            log.info("║  Fecha/Hora: {}                              ║",
+            log.info("║  Duración:     {} ms ({} segundos)                            ║",
+                    duracion, duracion / 1000);
+            log.info("║  Fecha/Hora:   {}                                             ║",
                     LocalDateTime.now().format(FORMATTER));
             log.info("╚═══════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
             log.error("╔═══════════════════════════════════════════════════════════════╗");
-            log.error("║  ERROR CRÍTICO EN SINCRONIZACIÓN                            ║");
+            log.error("║  ERROR CRÍTICO EN SINCRONIZACIÓN                              ║");
             log.error("╚═══════════════════════════════════════════════════════════════╝");
             log.error("Error no esperado durante sincronización: {}", e.getMessage(), e);
         }
     }
 
-    // ========================================================================
-    // SINCRONIZACIÓN SEMANAL COMPLETA (OPCIONAL)
-    // ========================================================================
 
     /**
-     * Job programado para sincronización SEMANAL completa.
-     *
-     * Se ejecuta todos los lunes a las 3:00 AM.
-     * Realiza una sincronización más amplia (últimas 4 semanas).
-     *
-     * Expresión Cron: "0 0 3 * * MON"
-     * - Segundo: 0
-     * - Minuto: 0
-     * - Hora: 3 (3 AM)
-     * - Día del mes: * (todos)
-     * - Mes: * (todos)
-     * - Día de la semana: MON (solo lunes)
-     *
-     * Este proceso es más exhaustivo y puede tomar más tiempo.
+     * Ejecuta sincronización en modo PARALELO.
+     * DELEGACIÓN:
+     * Este método delega la complejidad de la concurrencia al
+     * BusquedaMultiProvincialService que gestiona el ExecutorService.
      */
-    @Scheduled(cron = "${sincronizacion.rendiciones.semanal.cron:0 0 3 * * MON}")
-    public void sincronizarRendicionesSemanal() {
+    private void sincronizarEnParalelo() {
+        log.info("→ Iniciando sincronización PARALELA de {} provincias", provincias.length);
 
-        if (!schedulerEnabled) {
-            return;
-        }
+        // Convertir array a lista
+        List<String> listaProvincias = Arrays.asList(provincias);
 
+        // Delegar a BusquedaMultiProvincialService (gestiona concurrencia)
+        ResultadoBusquedaMultiprovincial resultado =
+                busquedaMultiProvincialService.sincronizarProvinciasEnParalelo(listaProvincias);
+
+        // Log de resultados
         log.info("╔═══════════════════════════════════════════════════════════════╗");
-        log.info("║  SINCRONIZACIÓN SEMANAL COMPLETA - INICIANDO                ║");
+        log.info("║  RESUMEN - SINCRONIZACIÓN PARALELA                            ║");
+        log.info("╠═══════════════════════════════════════════════════════════════╣");
+        log.info("║  Provincias procesadas:     {}                                ║",
+                resultado.getTotalProvinciasConsultadas());
+        log.info("║  Provincias exitosas:       {}                                ║",
+                resultado.getProvinciasExitosas());
+        log.info("║  Rendiciones actualizadas:  {}                                ║",
+                resultado.getTotalInfraccionesProcesadas());
         log.info("╚═══════════════════════════════════════════════════════════════╝");
 
-        try {
-            // Sincronización más amplia: últimas 4 semanas (28 días)
-            int diasSemanal = 28;
-            int totalActualizadas = 0;
-
-            for (String codigoProvincia : provincias) {
-                log.info("→ Sincronización semanal para provincia: {}", codigoProvincia);
-
-                try {
-                    int actualizadas = sincronizacionRendicionesService.sincronizarRendiciones(
-                            codigoProvincia,
-                            diasSemanal
-                    );
-
-                    totalActualizadas += actualizadas;
-
-                } catch (Exception e) {
-                    log.error("Error en sincronización semanal de {}: {}",
-                            codigoProvincia, e.getMessage());
-                }
+        // Detalle por provincia
+        log.debug("Detalle por provincia:");
+        resultado.getResultadosPorProvincia().forEach(prov -> {
+            if (prov.isExitoso()) {
+                log.debug("  ✓ {} → {} rendiciones, {} contracargos",
+                        prov.getCodigoProvincia(),
+                        prov.getInfraccionesActualizadas(),
+                        prov.getContracargosProcesados());
+            } else {
+                log.warn("  ✗ {} → ERROR: {}",
+                        prov.getCodigoProvincia(),
+                        prov.getMensajeError());
             }
-
-            log.info("✓ Sincronización semanal completada: {} actualizaciones",
-                    totalActualizadas);
-
-        } catch (Exception e) {
-            log.error("Error crítico en sincronización semanal: {}", e.getMessage(), e);
-        }
+        });
     }
 
-    // ========================================================================
-    // VERIFICACIÓN DE SALUD DEL SISTEMA (OPCIONAL)
-    // ========================================================================
-
     /**
-     * Job de verificación de salud del sistema de sincronización.
-     *
+     * Job de verificación de salud del sistema.
      * Se ejecuta cada hora para verificar:
      * - Conectividad con e-Pagos
-     * - Validez del token
-     * - Estado de transacciones pendientes
+     * - Validez del token de autenticación
+     * PROPÓSITO:
+     * - Detección temprana de problemas de conectividad
+     * - Monitoreo proactivo del sistema
+     * - Alertas antes de la sincronización diaria
      *
-     * Expresión Cron: "0 0 * * * ?"
-     * Cada hora en punto
+     * Este health check es complementario al de Spring Boot Actuator.
      */
     @Scheduled(cron = "0 0 * * * ?")
     public void verificarSaludSistema() {
@@ -231,46 +221,22 @@ public class SincronizacionScheduler {
         }
 
         try {
-            // Verificar conectividad básica
-            boolean sistemaDisponible = sincronizacionRendicionesService.verificarConectividad();
+            log.debug("🔍 Verificando salud del sistema e-Pagos...");
+
+            // Verificar conectividad básica usando SincronizacionService
+            boolean sistemaDisponible = sincronizacionService.verificarConectividad();
 
             if (!sistemaDisponible) {
-                log.warn("⚠ ALERTA: Sistema e-Pagos no responde correctamente");
+                log.warn("   ALERTA: Sistema e-Pagos no responde correctamente");
+                log.warn("   Estado del token: {}",
+                        sincronizacionService.obtenerEstadoToken());
             } else {
                 log.debug("✓ Sistema e-Pagos operativo");
             }
 
         } catch (Exception e) {
-            log.error("Error en verificación de salud: {}", e.getMessage());
+            log.error("❌ Error en verificación de salud: {}", e.getMessage());
         }
     }
 
-    // ========================================================================
-    // MÉTODOS DE UTILIDAD
-    // ========================================================================
-
-    /**
-     * Obtiene el estado actual del scheduler.
-     *
-     * @return true si está habilitado, false si está deshabilitado
-     */
-    public boolean isSchedulerEnabled() {
-        return schedulerEnabled;
-    }
-
-    /**
-     * Habilita el scheduler en tiempo de ejecución.
-     */
-    public void habilitarScheduler() {
-        this.schedulerEnabled = true;
-        log.info("✓ Scheduler de rendiciones HABILITADO");
-    }
-
-    /**
-     * Deshabilita el scheduler en tiempo de ejecución.
-     */
-    public void deshabilitarScheduler() {
-        this.schedulerEnabled = false;
-        log.warn("✗ Scheduler de rendiciones DESHABILITADO");
-    }
 }

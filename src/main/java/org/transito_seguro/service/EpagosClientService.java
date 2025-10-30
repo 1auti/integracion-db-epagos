@@ -30,7 +30,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 
 /**
- * Servicio cliente para comunicación con la API REST/SOAP de e-Pagos.
+ * Servicio cliente para comunicación con la API REST de e-Pagos.
  *
  * Este servicio encapsula toda la comunicación con el sistema e-Pagos,
  * realizando peticiones HTTP POST con payload JSON y recibiendo respuestas JSON.

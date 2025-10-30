@@ -4,9 +4,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.transito_seguro.dto.rendiciones.RendicionDTO;
 import org.transito_seguro.model.ResultadoBusquedaMultiprovincial;
 import org.transito_seguro.model.ResultadoBusquedaProvincia;
+import org.transito_seguro.model.ResultadoSincronizacion;
 import org.transito_seguro.exception.BusquedaMultiProvincialException;
 
 import javax.annotation.PreDestroy;
@@ -17,34 +17,27 @@ import java.util.concurrent.*;
 /**
  * Servicio de COORDINACIÓN para búsqueda multiprovincial CONCURRENTE.
  *
- * Responsabilidades:
- * 1.  Gestionar ExecutorService para concurrencia
- * 2.  Lanzar tareas paralelas por provincia
- * 3.  Esperar resultados con timeout
- * 4.  Consolidar resultados de múltiples provincias
- * 5.  Manejar errores y timeouts
+ * FLUJO:
+ * 1. Recibe lista de provincias
+ * 2. Crea un thread por provincia
+ * 3. Cada thread ejecuta: SincronizacionService.sincronizarProvincia()
+ * 4. Espera resultados con timeout
+ * 5. Consolida y retorna
  */
 @Service
 @Slf4j
 public class BusquedaMultiProvincialService {
 
     // ========================================================================
-    // DEPENDENCIAS - Servicios especializados
+    // DEPENDENCIAS
     // ========================================================================
 
     /**
-     * Servicio de CONSULTA a e-Pagos.
-     * Responsabilidad: Obtener datos desde la API externa.
+     * Servicio coordinador que sincroniza UNA provincia completa.
+     * Este servicio contiene TODA la lógica de sincronización.
      */
     @Autowired
-    private ConsultaRendicionesService consultaService;
-
-    /**
-     * Servicio de PROCESAMIENTO de rendiciones.
-     * Responsabilidad: Actualizar base de datos local.
-     */
-    @Autowired
-    private RendicionService rendicionService;
+    private SincronizacionService sincronizacionService;
 
     // ========================================================================
     // CONFIGURACIÓN
@@ -70,28 +63,28 @@ public class BusquedaMultiProvincialService {
 
     /**
      * Pool de threads para ejecución concurrente.
-     * Lazy initialization para usar configuración inyectada.
+     * Lazy initialization para usar la configuración inyectada.
      */
     private ExecutorService executorService;
 
     // ========================================================================
-    // MÉTODOS PÚBLICOS - SINCRONIZACIÓN MULTIPROVINCIAL
+    // MÉTODOS PÚBLICOS - COORDINACIÓN MULTIPROVINCIAL
     // ========================================================================
 
     /**
      * Sincroniza múltiples provincias en paralelo (última semana).
      *
-     * Este es el método principal para sincronización concurrente.
-     * Procesa todas las provincias simultáneamente en threads separados.
+     * RESPONSABILIDAD:
+     * Solo coordina la ejecución paralela. La lógica de sincronización
+     * está delegada a SincronizacionService.
      *
-     * @param codigosProvincias Lista de códigos de provincia (ej: ["PBA", "MDA"])
+     * @param codigosProvincias Lista de códigos de provincia
      * @return Resultado consolidado con estadísticas
-     * @throws BusquedaMultiProvincialException si hay error crítico
      */
     public ResultadoBusquedaMultiprovincial sincronizarProvinciasEnParalelo(
             List<String> codigosProvincias) {
 
-        // Calcular rango de fechas
+        // Calcular rango de fechas (últimos N días)
         LocalDate fechaHasta = LocalDate.now();
         LocalDate fechaDesde = fechaHasta.minusDays(diasAtras);
 
@@ -101,15 +94,13 @@ public class BusquedaMultiProvincialService {
     /**
      * Sincroniza múltiples provincias en paralelo para un rango de fechas.
      *
-     * Flujo de ejecución:
+     * COORDINACIÓN PURA:
      * 1. Validar parámetros
      * 2. Inicializar ExecutorService
      * 3. Lanzar una tarea por provincia
-     * 4. Cada tarea:
-     *    a) Consulta rendiciones (ConsultaRendicionesService)
-     *    b) Procesa rendiciones (RendicionService)
-     * 5. Esperar a que todas terminen (con timeout)
-     * 6. Consolidar y retornar resultados
+     * 4. Cada tarea ejecuta: SincronizacionService.sincronizarProvincia()
+     * 5. Esperar resultados con timeout
+     * 6. Consolidar y retornar
      *
      * @param codigosProvincias Lista de provincias a sincronizar
      * @param fechaDesde Fecha inicial del rango
@@ -129,6 +120,7 @@ public class BusquedaMultiProvincialService {
         log.info("║  Rango:        {} → {}                                       ║",
                 fechaDesde, fechaHasta);
         log.info("║  Threads:      {} paralelos                                  ║", poolSize);
+        log.info("║  Sincroniza:   RENDICIONES + CONTRACARGOS                   ║");
         log.info("╚═══════════════════════════════════════════════════════════════╝");
 
         // PASO 1: Validar parámetros
@@ -174,10 +166,16 @@ public class BusquedaMultiProvincialService {
             log.debug("Inicializando ExecutorService con {} threads", poolSize);
             executorService = Executors.newFixedThreadPool(
                     poolSize,
-                    runnable -> {
-                        Thread thread = new Thread(runnable);
-                        thread.setName("SincroMulti-" + thread.getId());
-                        return thread;
+                    new ThreadFactory() {
+                        private int contador = 0;
+
+                        @Override
+                        public Thread newThread(Runnable runnable) {
+                            Thread thread = new Thread(runnable);
+                            thread.setName("SincroMulti-" + (++contador));
+                            thread.setDaemon(false);
+                            return thread;
+                        }
                     }
             );
         }
@@ -186,9 +184,15 @@ public class BusquedaMultiProvincialService {
     /**
      * Lanza tareas concurrentes para cada provincia.
      *
-     * Cada tarea ejecutará:
-     * 1. ConsultaRendicionesService.consultarRendiciones()
-     * 2. RendicionService.procesarRendiciones()
+     * DELEGACIÓN TOTAL:
+     * Cada tarea simplemente llama a:
+     * SincronizacionService.sincronizarProvincia()
+     *
+     * Ese servicio se encarga de TODO:
+     * - Consultar rendiciones (vía EpagosClientService)
+     * - Procesar rendiciones (vía RendicionService)
+     * - Consultar contracargos (vía EpagosClientService)
+     * - Procesar contracargos (vía ContracargoService)
      *
      * @param codigosProvincias Lista de provincias
      * @param fechaDesde Fecha inicial
@@ -202,12 +206,26 @@ public class BusquedaMultiProvincialService {
 
         Map<String, Future<ResultadoBusquedaProvincia>> futures = new ConcurrentHashMap<>();
 
+        // Calcular días atrás para cada provincia
+        final int diasParaConsultar = (int) java.time.temporal.ChronoUnit.DAYS.between(
+                fechaDesde,
+                fechaHasta
+        );
+
         for (String codigoProvincia : codigosProvincias) {
             log.debug("→ Lanzando tarea para provincia: {}", codigoProvincia);
 
             // Crear y lanzar tarea
-            Future<ResultadoBusquedaProvincia> future = executorService.submit(() ->
-                    procesarProvincia(codigoProvincia, fechaDesde, fechaHasta)
+            // DELEGACIÓN TOTAL a SincronizacionService
+            final String provincia = codigoProvincia; // Efectivamente final para lambda
+
+            Future<ResultadoBusquedaProvincia> future = executorService.submit(
+                    new Callable<ResultadoBusquedaProvincia>() {
+                        @Override
+                        public ResultadoBusquedaProvincia call() {
+                            return procesarProvincia(provincia, diasParaConsultar);
+                        }
+                    }
             );
 
             futures.put(codigoProvincia, future);
@@ -219,60 +237,74 @@ public class BusquedaMultiProvincialService {
     }
 
     /**
-     * Procesa una provincia completa: consulta + procesamiento.
+     * Procesa una provincia en un thread separado.
      *
-     * Este método se ejecuta en un thread separado para cada provincia.
-     *
-     * Flujo:
-     * 1. Consultar rendiciones desde e-Pagos (ConsultaRendicionesService)
-     * 2. Procesar y actualizar cobranzas (RendicionService)
-     * 3. Retornar resultado estructurado
+     * DELEGACIÓN PURA + ADAPTER:
+     * 1. Llama a SincronizacionService.sincronizarProvincia()
+     * 2. Convierte ResultadoSincronizacion → ResultadoBusquedaProvincia
+     * 3. Retorna resultado en formato esperado por el consolidador
      *
      * @param codigoProvincia Código de la provincia
-     * @param fechaDesde Fecha inicial
-     * @param fechaHasta Fecha final
-     * @return Resultado del procesamiento
+     * @param diasAtras Días hacia atrás para consultar
+     * @return Resultado del procesamiento en formato ResultadoBusquedaProvincia
      */
     private ResultadoBusquedaProvincia procesarProvincia(
             String codigoProvincia,
-            LocalDate fechaDesde,
-            LocalDate fechaHasta) {
+            int diasAtras) {
 
         log.info("║ → Procesando provincia: {}", codigoProvincia);
 
         ResultadoBusquedaProvincia resultado = new ResultadoBusquedaProvincia(codigoProvincia);
 
         try {
-            // PASO 1: Consultar rendiciones desde e-Pagos
-            // DELEGACIÓN a ConsultaRendicionesService
-            List<RendicionDTO> rendiciones = consultaService.consultarRendiciones(
+            // ================================================================
+            // DELEGACIÓN TOTAL a SincronizacionService
+            // ================================================================
+            // Este servicio se encarga de:
+            // 1. Consultar rendiciones (EpagosClientService)
+            // 2. Procesar rendiciones (RendicionService)
+            // 3. Consultar contracargos (EpagosClientService)
+            // 4. Procesar contracargos (ContracargoService)
+
+            ResultadoSincronizacion resultadoSync =
+                    sincronizacionService.sincronizarProvincia(codigoProvincia, diasAtras);
+
+            // ================================================================
+            // ADAPTER PATTERN: Convertir ResultadoSincronizacion → ResultadoBusquedaProvincia
+            // ================================================================
+
+            // Mapear datos de rendiciones
+            resultado.setRendicionesEncontradas(resultadoSync.getRendicionesObtenidas());
+            resultado.setInfraccionesActualizadas(resultadoSync.getCobranzasActualizadas());
+
+            // Mapear datos de contracargos
+            resultado.setContracargosEncontrados(resultadoSync.getContracargosObtenidos());
+            resultado.setContracargosProcesados(resultadoSync.getContracargosProcesados());
+
+            // Mapear estado general
+            resultado.setExitoso(resultadoSync.isExitoso());
+
+            // Mapear mensaje de error si existe
+            if (!resultadoSync.isExitoso() && resultadoSync.getMensajeError() != null) {
+                resultado.setMensajeError(resultadoSync.getMensajeError());
+            }
+
+            // Log de éxito
+            log.info("║ ✓ Provincia {} completada: {} rendiciones obtenidas, {} cobranzas actualizadas, {} contracargos",
                     codigoProvincia,
-                    fechaDesde,
-                    fechaHasta
-            );
-
-            resultado.setRendicionesEncontradas(rendiciones.size());
-
-            // PASO 2: Procesar rendiciones y actualizar BD
-            // DELEGACIÓN a RendicionService
-            int cobranzasActualizadas = rendicionService.procesarRendiciones(
-                    codigoProvincia,
-                    rendiciones
-            );
-
-            resultado.setInfraccionesActualizadas(cobranzasActualizadas);
-            resultado.setExitoso(true);
-
-            log.info("║ ✓ Provincia {} completada: {} rendiciones, {} cobranzas actualizadas",
-                    codigoProvincia, rendiciones.size(), cobranzasActualizadas);
+                    resultadoSync.getRendicionesObtenidas(),
+                    resultadoSync.getCobranzasActualizadas(),
+                    resultadoSync.getContracargosProcesados());
 
         } catch (IllegalArgumentException e) {
+            // Error de validación de parámetros
             log.warn("║ ⚠ Validación fallida en provincia {}: {}",
                     codigoProvincia, e.getMessage());
             resultado.setExitoso(false);
             resultado.setMensajeError("Parámetros inválidos: " + e.getMessage());
 
         } catch (Exception e) {
+            // Error genérico durante sincronización
             log.error("║ ✗ Error en provincia {}: {}", codigoProvincia, e.getMessage());
             resultado.setExitoso(false);
             resultado.setMensajeError("Error: " + e.getMessage());
@@ -285,9 +317,10 @@ public class BusquedaMultiProvincialService {
      * Consolida los resultados de todas las tareas concurrentes.
      *
      * Espera a que cada Future termine (con timeout) y recopila estadísticas.
+     * Maneja timeouts, interrupciones y errores de ejecución.
      *
-     * @param futures Mapa de Futures por provincia
-     * @return Resultado consolidado
+     * @param futures Mapa con los Futures de cada provincia
+     * @return Resultado consolidado de todas las provincias
      */
     private ResultadoBusquedaMultiprovincial consolidarResultados(
             Map<String, Future<ResultadoBusquedaProvincia>> futures) {
@@ -308,6 +341,7 @@ public class BusquedaMultiProvincialService {
                 consolidado.agregarResultadoProvincia(resultado);
 
             } catch (TimeoutException e) {
+                // Timeout: la provincia tardó más del tiempo permitido
                 log.warn("║ ⏱ Timeout en provincia {} (>{} seg)", provincia, timeoutSegundos);
 
                 ResultadoBusquedaProvincia resultadoTimeout =
@@ -318,10 +352,19 @@ public class BusquedaMultiProvincialService {
                 consolidado.agregarResultadoProvincia(resultadoTimeout);
 
             } catch (InterruptedException e) {
+                // Thread fue interrumpido
                 Thread.currentThread().interrupt();
                 log.error("║ ⚠ Interrupción en provincia {}", provincia);
 
+                ResultadoBusquedaProvincia resultadoInterrumpido =
+                        new ResultadoBusquedaProvincia(provincia);
+                resultadoInterrumpido.setExitoso(false);
+                resultadoInterrumpido.setMensajeError("Proceso interrumpido");
+
+                consolidado.agregarResultadoProvincia(resultadoInterrumpido);
+
             } catch (ExecutionException e) {
+                // Error durante la ejecución de la tarea
                 log.error("║ ✗ Error de ejecución en provincia {}: {}",
                         provincia, e.getCause().getMessage());
 
@@ -342,7 +385,12 @@ public class BusquedaMultiProvincialService {
     // ========================================================================
 
     /**
-     * Valida los parámetros de entrada.
+     * Valida los parámetros de entrada para sincronización multiprovincial.
+     *
+     * @param codigosProvincias Lista de códigos de provincia
+     * @param fechaDesde Fecha inicial del rango
+     * @param fechaHasta Fecha final del rango
+     * @throws IllegalArgumentException si algún parámetro es inválido
      */
     private void validarParametros(
             List<String> codigosProvincias,
@@ -363,6 +411,17 @@ public class BusquedaMultiProvincialService {
             throw new IllegalArgumentException(
                     "La fecha desde no puede ser posterior a fecha hasta");
         }
+
+        // Validar que no se excedan los 90 días (límite de e-Pagos)
+        long diasDiferencia = java.time.temporal.ChronoUnit.DAYS.between(
+                fechaDesde,
+                fechaHasta
+        );
+
+        if (diasDiferencia > 90) {
+            throw new IllegalArgumentException(
+                    "El rango de fechas no puede superar los 90 días (límite de e-Pagos)");
+        }
     }
 
     // ========================================================================
@@ -370,7 +429,11 @@ public class BusquedaMultiProvincialService {
     // ========================================================================
 
     /**
-     * Log de resumen de la sincronización multiprovincial.
+     * Log de resumen final de sincronización multiprovincial.
+     *
+     * @param resultado Resultado consolidado
+     * @param totalProvincias Total de provincias procesadas
+     * @param duracionMs Duración en milisegundos
      */
     private void logResumen(
             ResultadoBusquedaMultiprovincial resultado,
@@ -378,35 +441,70 @@ public class BusquedaMultiProvincialService {
             long duracionMs) {
 
         log.info("╔═══════════════════════════════════════════════════════════════╗");
-        log.info("║  SINCRONIZACIÓN MULTIPROVINCIAL COMPLETADA                   ║");
+        log.info("║  SINCRONIZACIÓN MULTIPROVINCIAL COMPLETADA                    ║");
         log.info("╠═══════════════════════════════════════════════════════════════╣");
-        log.info("║  Total cobranzas:  {}                                        ║",
+        log.info("║  Provincias totales:   {}                                     ║",
+                totalProvincias);
+        log.info("║  Provincias exitosas:  {}                                     ║",
+                resultado.getProvinciasExitosas());
+        log.info("║  Provincias fallidas:  {}                                     ║",
+                totalProvincias - resultado.getProvinciasExitosas());
+        log.info("╠═══════════════════════════════════════════════════════════════╣");
+        log.info("║  Rendiciones procesadas: {}                                   ║",
                 resultado.getTotalInfraccionesProcesadas());
-        log.info("║  Exitosas:         {} / {}                                   ║",
-                resultado.getProvinciasExitosas(), totalProvincias);
-        log.info("║  Duración:         {} ms ({} seg)                            ║",
+        log.info("╠═══════════════════════════════════════════════════════════════╣");
+        log.info("║  Duración total:       {} ms ({} seg)                         ║",
                 duracionMs, duracionMs / 1000);
         log.info("╚═══════════════════════════════════════════════════════════════╝");
+
+        // Detalle por provincia (solo en modo debug)
+        if (log.isDebugEnabled()) {
+            log.debug("Detalle por provincia:");
+            resultado.getResultadosPorProvincia().forEach(prov -> {
+                if (prov.isExitoso()) {
+                    log.debug("  ✓ {} → {} rendiciones, {} cobranzas, {} contracargos",
+                            prov.getCodigoProvincia(),
+                            prov.getRendicionesEncontradas(),
+                            prov.getInfraccionesActualizadas(),
+                            prov.getContracargosProcesados());
+                } else {
+                    log.debug("  ✗ {} → ERROR: {}",
+                            prov.getCodigoProvincia(),
+                            prov.getMensajeError());
+                }
+            });
+        }
     }
 
     // ========================================================================
-    // LIFECYCLE
+    // LIFECYCLE - Limpieza de recursos
     // ========================================================================
 
     /**
-     * Libera recursos del ExecutorService al destruir el bean.
+     * Método de ciclo de vida para cerrar el ExecutorService correctamente.
+     *
+     * Se ejecuta automáticamente cuando Spring destruye el bean.
+     * Asegura que todos los threads se cierren correctamente.
      */
     @PreDestroy
     public void destroy() {
         if (executorService != null && !executorService.isShutdown()) {
             log.info("Apagando ExecutorService multiprovincial...");
 
+            // Solicitar apagado graceful
             executorService.shutdown();
 
             try {
+                // Esperar hasta 60 segundos para que terminen las tareas
                 if (!executorService.awaitTermination(60, TimeUnit.SECONDS)) {
+                    // Si no terminaron, forzar apagado
                     log.warn("Forzando apagado del ExecutorService (timeout)");
                     executorService.shutdownNow();
+
+                    // Esperar un poco más para el apagado forzado
+                    if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {
+                        log.error("ExecutorService no terminó después del apagado forzado");
+                    }
                 }
             } catch (InterruptedException e) {
                 log.error("Interrupción durante apagado del ExecutorService");
