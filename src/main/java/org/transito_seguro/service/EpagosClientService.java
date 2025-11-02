@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.transito_seguro.dto.CredencialesDTO;
+import org.transito_seguro.dto.credenciales.CredencialesEpagosDTO;
 import org.transito_seguro.dto.contracargos.ContracargoDTO;
 import org.transito_seguro.dto.contracargos.FiltroContracargoDTO;
 import org.transito_seguro.dto.contracargos.request.ContracargosRequestDTO;
@@ -25,37 +26,62 @@ import org.transito_seguro.exception.EpagosAuthException;
 import org.transito_seguro.exception.EpagosConnectionException;
 import org.transito_seguro.exception.EpagosException;
 import org.transito_seguro.util.FechaUtil;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Servicio cliente para comunicación con la API REST de e-Pagos.
+ * Servicio cliente MULTI-TENANT para comunicación con la API REST de e-Pagos.
  *
- * Este servicio encapsula toda la comunicación con el sistema e-Pagos,
- * realizando peticiones HTTP POST con payload JSON y recibiendo respuestas JSON.
+ * REFACTORIZADO para soportar múltiples organismos/provincias con credenciales dinámicas.
+ *
+ * Cambios principales vs versión anterior:
+ * ✅ Credenciales por parámetro (NO hardcodeadas)
+ * ✅ Caché de tokens POR organismo (no global)
+ * ✅ Soporta N organismos simultáneamente
+ * ✅ Thread-safe con ConcurrentHashMap
  *
  * Arquitectura:
  * - Cliente HTTP: Apache HttpClient para peticiones HTTP
  * - Serialización: Jackson para JSON ↔ Java Objects
- * - Gestión de Token: Caché inteligente con renovación automática (24 horas)
+ * - Gestión de Token: Caché inteligente POR ORGANISMO con renovación automática (24 horas)
  * - Reintentos: Patrón Retry con backoff exponencial para errores temporales
+ * - Multi-Tenant: Soporta múltiples organismos con credenciales independientes
  *
  * Responsabilidades:
- * - Autenticación y gestión de tokens (caché de 24 horas)
+ * - Autenticación y gestión de tokens POR ORGANISMO (caché de 24 horas)
  * - Invocación de métodos de la API e-Pagos vía HTTP POST + JSON
  * - Manejo de reintentos y timeouts
  * - Parseo y validación de respuestas JSON
  * - Gestión centralizada de errores y logging detallado
  *
  * Métodos de API soportados:
- * - obtener_token: Autenticación y obtención de token
+ * - obtener_token: Autenticación y obtención de token POR ORGANISMO
  * - obtener_rendiciones: Consulta de rendiciones por rango de fechas
  * - obtener_contracargos: Consulta de contracargos por rango de fechas
  *
  * Formato de comunicación:
  * - REQUEST: HTTP POST con Content-Type: application/json
  * - RESPONSE: JSON con estructura según documentación e-Pagos v2.1
+ *
+ * USO:
+ * <pre>
+ * // Construir credenciales desde BD
+ * CredencialesEpagosDTO credenciales = new CredencialesEpagosDTO();
+ * credenciales.setIdOrganismo("4704");
+ * credenciales.setUsuario("273617");
+ * credenciales.setClave("77c66cd...");
+ * credenciales.setHash("8f4b11...");
+ *
+ * // Consultar rendiciones
+ * List<RendicionDTO> rendiciones = epagosClient.obtenerRendiciones(
+ *     credenciales,
+ *     LocalDate.now().minusDays(7),
+ *     LocalDate.now()
+ * );
+ * </pre>
  */
 @Service
 @Slf4j
@@ -66,14 +92,14 @@ public class EpagosClientService {
     // ========================================================================
 
     /**
-     * Cliente HTTP de Apache para realizar peticiones
-     * Configurado en SoapClientConfig.java con timeouts y pool de conexiones
+     * Cliente HTTP de Apache para realizar peticiones.
+     * Configurado en SoapClientConfig.java con timeouts y pool de conexiones.
      */
     @Autowired
     private CloseableHttpClient httpClient;
 
     /**
-     * ObjectMapper de Jackson para serialización JSON
+     * ObjectMapper de Jackson para serialización JSON.
      */
     private final ObjectMapper objectMapper;
 
@@ -82,29 +108,16 @@ public class EpagosClientService {
     // ========================================================================
 
     /**
-     * URL base de la API de e-Pagos
-     * Ejemplo: https://www.epagos.com/svc/wsespeciales.asmx
+     * URL base de la API de e-Pagos.
+     * Ejemplo: http://192.168.50.202/epagos/prod/
+     *
+     * NOTA: Las credenciales YA NO se configuran aquí, se pasan por parámetro.
      */
     @Value("${epagos.soap.url}")
     private String apiUrl;
 
     /**
-     * Credenciales de autenticación proporcionadas por e-Pagos
-     */
-    @Value("${epagos.soap.usuario}")
-    private String usuario;
-
-    @Value("${epagos.soap.clave}")
-    private String clave;
-
-    /**
-     * Código de organismo asignado por e-Pagos
-     */
-    @Value("${epagos.soap.id-organismo:1}")
-    private Integer idOrganismo;
-
-    /**
-     * Configuración de reintentos
+     * Configuración de reintentos.
      */
     @Value("${epagos.soap.max-retries:3}")
     private int maxRetries;
@@ -113,45 +126,57 @@ public class EpagosClientService {
     private int retryDelayMs;
 
     // ========================================================================
-    // CACHÉ DE TOKEN
+    // CACHÉ DE TOKENS POR ORGANISMO (MULTI-TENANT)
     // ========================================================================
 
     /**
-     * Token de autenticación actual (válido por 24 horas según e-Pagos)
+     * Caché de tokens por organismo.
+     * Key: idOrganismo (String)
+     * Value: TokenCache con token y fecha de expiración
+     *
+     * Thread-safe con ConcurrentHashMap para soportar múltiples threads.
      */
-    private String tokenActual;
+    private final Map<String, TokenCache> tokensPorOrganismo = new ConcurrentHashMap<>();
 
     /**
-     * Fecha de expiración del token actual
+     * Clase interna para almacenar token y su fecha de expiración.
      */
-    private LocalDateTime tokenExpiracion;
+    private static class TokenCache {
+        String token;
+        LocalDateTime expiracion;
+
+        TokenCache(String token, LocalDateTime expiracion) {
+            this.token = token;
+            this.expiracion = expiracion;
+        }
+    }
 
     // ========================================================================
     // CONSTANTES
     // ========================================================================
 
     /**
-     * Versión del protocolo de e-Pagos (según documentación)
+     * Versión del protocolo de e-Pagos (según documentación).
      */
     private static final String VERSION_PROTOCOLO = "2.1";
 
     /**
-     * Duración de validez del token en horas
+     * Duración de validez del token en horas.
      */
     private static final int TOKEN_VALIDEZ_HORAS = 24;
 
     /**
-     * Margen de seguridad antes de expiración (renovar 1 hora antes)
+     * Margen de seguridad antes de expiración (renovar 1 hora antes).
      */
     private static final int TOKEN_MARGEN_RENOVACION_HORAS = 1;
 
     /**
-     * Content-Type para peticiones HTTP
+     * Content-Type para peticiones HTTP.
      */
     private static final String CONTENT_TYPE = "application/json";
 
     /**
-     * Encoding para peticiones HTTP
+     * Encoding para peticiones HTTP.
      */
     private static final String CHARSET = "UTF-8";
 
@@ -167,7 +192,7 @@ public class EpagosClientService {
         this.objectMapper = new ObjectMapper();
         // Configurar ObjectMapper para Java 8 Date/Time API
         this.objectMapper.findAndRegisterModules();
-        log.info("EpagosClientService inicializado con cliente HTTP + JSON");
+        log.info("EpagosClientService inicializado (MULTI-TENANT) con cliente HTTP + JSON");
     }
 
     // ========================================================================
@@ -175,65 +200,78 @@ public class EpagosClientService {
     // ========================================================================
 
     /**
-     * Obtiene un token de autenticación válido.
+     * Obtiene un token de autenticación válido para un organismo específico.
+     *
+     * MULTI-TENANT: Cada organismo tiene su propio token en caché.
      *
      * Estrategia de caché:
-     * 1. Si hay token en caché y está vigente → retorna inmediatamente
+     * 1. Si hay token en caché para este organismo y está vigente → retorna inmediatamente
      * 2. Si token próximo a expirar (< 1 hora) → renueva automáticamente
      * 3. Si no hay token o expiró → solicita nuevo a e-Pagos
      *
      * El token es válido por 24 horas según la API de e-Pagos.
      * Se implementa margen de seguridad de 1 hora para evitar expiración durante uso.
      *
+     * @param credenciales Credenciales del organismo (incluye idOrganismo, usuario, clave)
      * @return Token de autenticación válido (String)
      * @throws EpagosAuthException si falla la autenticación con e-Pagos
      * @throws EpagosConnectionException si hay error de conexión
      */
-    public String obtenerTokenValido() throws EpagosException {
-        log.debug("Verificando validez del token actual");
+    public String obtenerTokenValido(CredencialesEpagosDTO credenciales) throws EpagosException {
+        String keyOrganismo = credenciales.getIdOrganismo();
 
-        // Verificar si hay token en caché y está vigente
-        if (tokenActual != null && tokenExpiracion != null) {
+        log.debug("Verificando validez del token para organismo: {}", keyOrganismo);
+
+        // Verificar si hay token en caché para este organismo
+        TokenCache cache = tokensPorOrganismo.get(keyOrganismo);
+
+        if (cache != null && cache.token != null && cache.expiracion != null) {
             LocalDateTime ahora = LocalDateTime.now();
 
             // Si el token sigue vigente (con margen de seguridad)
-            if (ahora.plusHours(TOKEN_MARGEN_RENOVACION_HORAS).isBefore(tokenExpiracion)) {
-                log.debug("Token en caché válido hasta: {}", tokenExpiracion);
-                return tokenActual;
+            if (ahora.plusHours(TOKEN_MARGEN_RENOVACION_HORAS).isBefore(cache.expiracion)) {
+                log.debug("Token en caché válido para organismo {} hasta: {}",
+                        keyOrganismo, cache.expiracion);
+                return cache.token;
             }
 
-            log.info("Token próximo a expirar ({}), renovando...", tokenExpiracion);
+            log.info("Token próximo a expirar para organismo {} ({}), renovando...",
+                    keyOrganismo, cache.expiracion);
         }
 
         // Solicitar nuevo token
-        return renovarToken();
+        return renovarToken(credenciales);
     }
 
     /**
-     * Renueva el token solicitando uno nuevo a e-Pagos.
+     * Renueva el token solicitando uno nuevo a e-Pagos para un organismo específico.
      *
      * Proceso:
-     * 1. Construye request JSON con credenciales
+     * 1. Construye request JSON con credenciales del organismo
      * 2. Envía POST a /obtener_token
      * 3. Parsea respuesta JSON
-     * 4. Actualiza caché interno
+     * 4. Actualiza caché específico del organismo
      * 5. Retorna token
      *
+     * @param credenciales Credenciales del organismo
      * @return Nuevo token de autenticación
      * @throws EpagosAuthException si credenciales inválidas
      * @throws EpagosConnectionException si error de conexión
      */
-    private String renovarToken() throws EpagosException {
-        log.info("Solicitando nuevo token a e-Pagos");
+    private String renovarToken(CredencialesEpagosDTO credenciales) throws EpagosException {
+        String keyOrganismo = credenciales.getIdOrganismo();
+
+        log.info("Solicitando nuevo token a e-Pagos para organismo: {}", keyOrganismo);
 
         try {
-            // Construir request
+            // Construir request con credenciales específicas del organismo
             TokenRequestDTO request = new TokenRequestDTO();
             request.setVersion(VERSION_PROTOCOLO);
-            request.setUsuario(usuario);
-            request.setClave(clave);
+            request.setUsuario(credenciales.getUsuario());
+            request.setClave(credenciales.getClave());
 
-            log.debug("Request token: usuario={}, version={}", usuario, VERSION_PROTOCOLO);
+            log.debug("Request token para organismo {}: usuario={}, version={}",
+                    keyOrganismo, credenciales.getUsuario(), VERSION_PROTOCOLO);
 
             // Invocar API con reintentos
             TokenResponseDTO response = ejecutarConReintentos(
@@ -248,22 +286,26 @@ public class EpagosClientService {
             // Validar respuesta
             if (response == null || !response.isExitosa()) {
                 String mensaje = response != null ? response.getRespuesta() : "Respuesta nula";
-                log.error("Error al obtener token: {} (código: {})",
-                        mensaje, response != null ? response.getIdResp() : "N/A");
-                throw new EpagosAuthException("Fallo en autenticación: " + mensaje);
+                log.error("Error al obtener token para organismo {}: {} (código: {})",
+                        keyOrganismo, mensaje, response != null ? response.getIdResp() : "N/A");
+                throw new EpagosAuthException("Fallo en autenticación para organismo " + keyOrganismo + ": " + mensaje);
             }
 
-            // Actualizar caché
-            tokenActual = response.getToken();
-            tokenExpiracion = LocalDateTime.now().plusHours(TOKEN_VALIDEZ_HORAS);
+            // Actualizar caché específico del organismo
+            String nuevoToken = response.getToken();
+            LocalDateTime expiracion = LocalDateTime.now().plusHours(TOKEN_VALIDEZ_HORAS);
 
-            log.info("✓ Token obtenido exitosamente, válido hasta: {}", tokenExpiracion);
-            return tokenActual;
+            tokensPorOrganismo.put(keyOrganismo, new TokenCache(nuevoToken, expiracion));
+
+            log.info("✓ Token obtenido exitosamente para organismo {}, válido hasta: {}",
+                    keyOrganismo, expiracion);
+
+            return nuevoToken;
 
         } catch (EpagosAuthException e) {
             throw e;
         } catch (Exception e) {
-            log.error("Error al renovar token", e);
+            log.error("Error al renovar token para organismo {}", keyOrganismo, e);
             throw new EpagosConnectionException("Error al conectar con e-Pagos para obtener token", e);
         }
     }
@@ -273,7 +315,9 @@ public class EpagosClientService {
     // ========================================================================
 
     /**
-     * Obtiene las rendiciones desde e-Pagos para un rango de fechas.
+     * Obtiene las rendiciones desde e-Pagos para un organismo y rango de fechas.
+     *
+     * MULTI-TENANT: Cada organismo consulta con sus propias credenciales.
      *
      * Las rendiciones son reportes de pagos realizados que e-Pagos
      * transfiere periódicamente al organismo.
@@ -289,7 +333,7 @@ public class EpagosClientService {
      *
      * Proceso:
      * 1. Valida parámetros de entrada
-     * 2. Obtiene token válido (renovación automática si necesario)
+     * 2. Obtiene token válido para el organismo (renovación automática si necesario)
      * 3. Construye request JSON con filtros
      * 4. Envía POST a /obtener_rendiciones
      * 5. Parsea respuesta JSON
@@ -301,6 +345,7 @@ public class EpagosClientService {
      * - Formato fechas: yyyy-MM-dd
      * - Solo rendiciones depositadas
      *
+     * @param credenciales Credenciales del organismo
      * @param fechaDesde Fecha inicial del rango (inclusiva)
      * @param fechaHasta Fecha final del rango (inclusiva)
      * @return Lista de rendiciones encontradas (nunca null, puede estar vacía)
@@ -308,22 +353,26 @@ public class EpagosClientService {
      * @throws IllegalArgumentException si parámetros inválidos
      */
     public List<RendicionDTO> obtenerRendiciones(
+            CredencialesEpagosDTO credenciales,
             LocalDate fechaDesde,
             LocalDate fechaHasta) throws EpagosException {
 
-        log.info("Consultando rendiciones desde {} hasta {}", fechaDesde, fechaHasta);
+        String keyOrganismo = credenciales.getIdOrganismo();
+
+        log.info("Consultando rendiciones para organismo {} desde {} hasta {}",
+                keyOrganismo, fechaDesde, fechaHasta);
 
         // Validar parámetros
         validarRangoFechas(fechaDesde, fechaHasta);
 
         try {
-            // Obtener token válido (con renovación automática si necesario)
-            String token = obtenerTokenValido();
+            // Obtener token válido para este organismo
+            String token = obtenerTokenValido(credenciales);
 
-            // Construir credenciales
-            CredencialesDTO credenciales = new CredencialesDTO();
-            credenciales.setIdOrganismo(idOrganismo);
-            credenciales.setToken(token);
+            // Construir credenciales para el request
+            CredencialesDTO creds = new CredencialesDTO();
+            creds.setIdOrganismo(Integer.parseInt(credenciales.getIdOrganismo()));
+            creds.setToken(token);
 
             // Construir filtros
             FiltroRendicionDTO filtro = new FiltroRendicionDTO();
@@ -333,16 +382,17 @@ public class EpagosClientService {
             // Construir request
             RendicionesRequestDTO request = new RendicionesRequestDTO();
             request.setVersion(VERSION_PROTOCOLO);
-            request.setCredenciales(credenciales);
+            request.setCredenciales(creds);
             request.setRendicion(filtro);
 
-            log.debug("Request rendiciones: fechaDesde={}, fechaHasta={}", fechaDesde, fechaHasta);
+            log.debug("Request rendiciones para organismo {}: fechaDesde={}, fechaHasta={}",
+                    keyOrganismo, fechaDesde, fechaHasta);
 
             // Invocar API con reintentos
             RendicionesResponseDTO response = ejecutarConReintentos(
                     () -> {
                         String json = objectMapper.writeValueAsString(request);
-                        HttpResponse httpResponse = ejecutarPost("/obtener_rendiciones", json);
+                        HttpResponse httpResponse = ejecutarPost("/obtenerRendicionFull", json);
                         String responseBody = EntityUtils.toString(httpResponse.getEntity(), CHARSET);
 
                         log.debug("Response JSON (primeros 500 chars): {}",
@@ -354,30 +404,34 @@ public class EpagosClientService {
 
             // Validar respuesta
             if (response == null) {
-                throw new EpagosException("Respuesta nula de e-Pagos");
+                throw new EpagosException("Respuesta nula de e-Pagos para organismo " + keyOrganismo);
             }
 
-            // Verificar código de respuesta (05001 = éxito según documentación)
-            if (!"05001".equals(response.getIdResp())) {
-                log.warn("Código de respuesta no exitoso: {} - {}",
-                        response.getIdResp(), response.getRespuesta());
+            // Verificar código de respuesta (05001 o 5001 = éxito según documentación)
+            String idResp = response.getIdResp();
+            if (!"05001".equals(idResp) && !"5001".equals(idResp)) {
+                log.warn("Código de respuesta no exitoso para organismo {}: {} - {}",
+                        keyOrganismo, idResp, response.getRespuesta());
 
                 // Manejar errores específicos según documentación
-                switch (response.getIdResp()) {
+                switch (idResp) {
                     case "05002":
+                    case "5002":
                         // Token inválido, forzar renovación y reintentar
-                        log.warn("Token inválido, invalidando caché y reintentando");
-                        tokenActual = null;
+                        log.warn("Token inválido para organismo {}, invalidando caché y reintentando", keyOrganismo);
+                        tokensPorOrganismo.remove(keyOrganismo);
                         throw new EpagosAuthException("Token inválido, renovando...");
 
                     case "05004":
+                    case "5004":
                         throw new EpagosException("Rango de fechas supera el límite permitido (90 días)");
 
                     case "05005":
+                    case "5005":
                         throw new EpagosException("Error al validar parámetro: " + response.getRespuesta());
 
                     default:
-                        throw new EpagosException("Error en e-Pagos: " + response.getRespuesta());
+                        throw new EpagosException("Error en e-Pagos para organismo " + keyOrganismo + ": " + response.getRespuesta());
                 }
             }
 
@@ -387,7 +441,7 @@ public class EpagosClientService {
                 rendiciones = new ArrayList<>();
             }
 
-            log.info("✓ Rendiciones obtenidas: {} registros", rendiciones.size());
+            log.info("✓ Rendiciones obtenidas para organismo {}: {} registros", keyOrganismo, rendiciones.size());
 
             // Logging detallado de las rendiciones
             if (!rendiciones.isEmpty()) {
@@ -400,41 +454,39 @@ public class EpagosClientService {
 
         } catch (EpagosAuthException e) {
             // Si el token expiró, reintentar UNA VEZ con token renovado
-            log.warn("Token expirado, reintentando con token renovado");
-            tokenActual = null;
-            tokenExpiracion = null;
-            return obtenerRendiciones(fechaDesde, fechaHasta);
+            log.warn("Token expirado para organismo {}, reintentando con token renovado", keyOrganismo);
+            tokensPorOrganismo.remove(keyOrganismo);
+            return obtenerRendiciones(credenciales, fechaDesde, fechaHasta);
 
         } catch (Exception e) {
-            log.error("Error al obtener rendiciones", e);
+            log.error("Error al obtener rendiciones para organismo {}", keyOrganismo, e);
             throw new EpagosException("Error al consultar rendiciones en e-Pagos: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Obtiene rendiciones para una provincia específica.
+     * Obtiene rendiciones para un organismo (versión con java.util.Date).
      *
-     * Versión sobrecargada que acepta código de provincia y java.util.Date
-     * para compatibilidad con código legacy y logging específico por provincia.
+     * Versión sobrecargada para compatibilidad con código legacy.
      *
-     * @param codigoProvincia Código de la provincia (ej: "PBA", "MDA", "CHACO")
+     * @param credenciales Credenciales del organismo
      * @param fechaDesde Fecha inicial del rango
      * @param fechaHasta Fecha final del rango
      * @return Lista de rendiciones encontradas
      * @throws EpagosException si hay error en la consulta
      */
     public List<RendicionDTO> obtenerRendiciones(
-            String codigoProvincia,
+            CredencialesEpagosDTO credenciales,
             Date fechaDesde,
             Date fechaHasta) throws EpagosException {
 
-        log.info("→ Consultando rendiciones para provincia: {}", codigoProvincia);
+        log.info("→ Consultando rendiciones para organismo: {}", credenciales.getIdOrganismo());
 
         // Convertir Date a LocalDate usando utilidad
         LocalDate desde = FechaUtil.convertirALocalDate(fechaDesde);
         LocalDate hasta = FechaUtil.convertirALocalDate(fechaHasta);
 
-        return obtenerRendiciones(desde, hasta);
+        return obtenerRendiciones(credenciales, desde, hasta);
     }
 
     // ========================================================================
@@ -442,7 +494,9 @@ public class EpagosClientService {
     // ========================================================================
 
     /**
-     * Obtiene los contracargos desde e-Pagos para un rango de fechas.
+     * Obtiene los contracargos desde e-Pagos para un organismo y rango de fechas.
+     *
+     * MULTI-TENANT: Cada organismo consulta con sus propias credenciales.
      *
      * Los contracargos son reclamos de usuarios que no reconocen un pago.
      * El sistema debe detectarlos para iniciar procesos de revisión o devolución.
@@ -453,24 +507,7 @@ public class EpagosClientService {
      * - Aceptado: Aceptado por el organismo o vencido sin respuesta
      * - Resuelto: Solucionado ante el medio de pago
      *
-     * Estructura de datos retornada:
-     * - Lista de ContracargoDTO (puede ser vacía)
-     * - Cada contracargo contiene:
-     *   • Número y estado
-     *   • Medio de pago y transacción afectada
-     *   • Montos y fechas relevantes
-     *   • Comprobantes (si existen)
-     *
-     * Proceso:
-     * 1. Valida parámetros de entrada
-     * 2. Obtiene token válido
-     * 3. Construye request JSON con filtros
-     * 4. Envía POST a /obtener_contracargos
-     * 5. Parsea respuesta JSON
-     * 6. Valida código de respuesta (06001 = éxito)
-     * 7. Analiza contracargos urgentes
-     * 8. Retorna lista de contracargos
-     *
+     * @param credenciales Credenciales del organismo
      * @param fechaDesde Fecha inicial del rango (inclusiva)
      * @param fechaHasta Fecha final del rango (inclusiva)
      * @return Lista de contracargos encontrados (nunca null, puede estar vacía)
@@ -478,22 +515,26 @@ public class EpagosClientService {
      * @throws IllegalArgumentException si parámetros inválidos
      */
     public List<ContracargoDTO> obtenerContracargos(
+            CredencialesEpagosDTO credenciales,
             LocalDate fechaDesde,
             LocalDate fechaHasta) throws EpagosException {
 
-        log.info("Consultando contracargos desde {} hasta {}", fechaDesde, fechaHasta);
+        String keyOrganismo = credenciales.getIdOrganismo();
+
+        log.info("Consultando contracargos para organismo {} desde {} hasta {}",
+                keyOrganismo, fechaDesde, fechaHasta);
 
         // Validar parámetros
         validarRangoFechas(fechaDesde, fechaHasta);
 
         try {
-            // Obtener token válido
-            String token = obtenerTokenValido();
+            // Obtener token válido para este organismo
+            String token = obtenerTokenValido(credenciales);
 
-            // Construir credenciales
-            CredencialesDTO credenciales = new CredencialesDTO();
-            credenciales.setIdOrganismo(idOrganismo);
-            credenciales.setToken(token);
+            // Construir credenciales para el request
+            CredencialesDTO creds = new CredencialesDTO();
+            creds.setIdOrganismo(Integer.parseInt(credenciales.getIdOrganismo()));
+            creds.setToken(token);
 
             // Construir filtros
             FiltroContracargoDTO filtro = new FiltroContracargoDTO();
@@ -503,10 +544,11 @@ public class EpagosClientService {
             // Construir request
             ContracargosRequestDTO request = new ContracargosRequestDTO();
             request.setVersion(VERSION_PROTOCOLO);
-            request.setCredenciales(credenciales);
+            request.setCredenciales(creds);
             request.setDatosContracargos(filtro);
 
-            log.debug("Request contracargos: fechaDesde={}, fechaHasta={}", fechaDesde, fechaHasta);
+            log.debug("Request contracargos para organismo {}: fechaDesde={}, fechaHasta={}",
+                    keyOrganismo, fechaDesde, fechaHasta);
 
             // Invocar API con reintentos
             ContracargosResponseDTO response = ejecutarConReintentos(
@@ -524,33 +566,38 @@ public class EpagosClientService {
 
             // Validar respuesta
             if (response == null) {
-                throw new EpagosException("Respuesta nula de e-Pagos");
+                throw new EpagosException("Respuesta nula de e-Pagos para organismo " + keyOrganismo);
             }
 
-            // Verificar código de respuesta (06001 = éxito según documentación)
-            if (!"06001".equals(response.getIdResp())) {
-                log.warn("Código de respuesta no exitoso: {} - {}",
-                        response.getIdResp(), response.getRespuesta());
+            // Verificar código de respuesta (06001 o 6001 = éxito según documentación)
+            String idResp = response.getIdResp();
+            if (!"06001".equals(idResp) && !"6001".equals(idResp)) {
+                log.warn("Código de respuesta no exitoso para organismo {}: {} - {}",
+                        keyOrganismo, idResp, response.getRespuesta());
 
                 // Manejar errores específicos según documentación
-                switch (response.getIdResp()) {
+                switch (idResp) {
                     case "06002":
+                    case "6002":
                         // Token inválido, forzar renovación
-                        log.warn("Token inválido, invalidando caché y reintentando");
-                        tokenActual = null;
+                        log.warn("Token inválido para organismo {}, invalidando caché y reintentando", keyOrganismo);
+                        tokensPorOrganismo.remove(keyOrganismo);
                         throw new EpagosAuthException("Token inválido, renovando...");
 
                     case "06004":
+                    case "6004":
                         throw new EpagosException("El rango de fechas no es correcto");
 
                     case "06005":
+                    case "6005":
                         throw new EpagosException("Error al validar parámetro: " + response.getRespuesta());
 
                     case "06006":
+                    case "6006":
                         throw new EpagosException("Versión inválida del protocolo");
 
                     default:
-                        throw new EpagosException("Error en e-Pagos: " + response.getRespuesta());
+                        throw new EpagosException("Error en e-Pagos para organismo " + keyOrganismo + ": " + response.getRespuesta());
                 }
             }
 
@@ -560,7 +607,7 @@ public class EpagosClientService {
                 contracargos = new ArrayList<>();
             }
 
-            log.info("✓ Contracargos obtenidos: {} registros", contracargos.size());
+            log.info("✓ Contracargos obtenidos para organismo {}: {} registros", keyOrganismo, contracargos.size());
 
             // Análisis de contracargos urgentes (requieren atención < 2 días)
             long contracargosUrgentes = contracargos.stream()
@@ -568,8 +615,8 @@ public class EpagosClientService {
                     .count();
 
             if (contracargosUrgentes > 0) {
-                log.warn("⚠️ ALERTA: {} contracargos requieren atención URGENTE (< 2 días para vencer)",
-                        contracargosUrgentes);
+                log.warn("⚠️ ALERTA: {} contracargos requieren atención URGENTE (< 2 días para vencer) - Organismo: {}",
+                        contracargosUrgentes, keyOrganismo);
             }
 
             // Logging detallado por estado
@@ -579,48 +626,46 @@ public class EpagosClientService {
                                 ContracargoDTO::getEstado,
                                 java.util.stream.Collectors.counting()
                         ));
-                log.debug("Contracargos por estado: {}", porEstado);
+                log.debug("Contracargos por estado para organismo {}: {}", keyOrganismo, porEstado);
             }
 
             return contracargos;
 
         } catch (EpagosAuthException e) {
             // Si el token expiró, reintentar UNA VEZ con token renovado
-            log.warn("Token expirado, reintentando con token renovado");
-            tokenActual = null;
-            tokenExpiracion = null;
-            return obtenerContracargos(fechaDesde, fechaHasta);
+            log.warn("Token expirado para organismo {}, reintentando con token renovado", keyOrganismo);
+            tokensPorOrganismo.remove(keyOrganismo);
+            return obtenerContracargos(credenciales, fechaDesde, fechaHasta);
 
         } catch (Exception e) {
-            log.error("Error al obtener contracargos", e);
+            log.error("Error al obtener contracargos para organismo {}", keyOrganismo, e);
             throw new EpagosException("Error al consultar contracargos en e-Pagos: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Obtiene contracargos para una provincia específica.
+     * Obtiene contracargos para un organismo (versión con java.util.Date).
      *
-     * Versión sobrecargada para compatibilidad con java.util.Date y
-     * logging específico por provincia.
+     * Versión sobrecargada para compatibilidad con código legacy.
      *
-     * @param codigoProvincia Código de la provincia
+     * @param credenciales Credenciales del organismo
      * @param fechaDesde Fecha inicial del rango
      * @param fechaHasta Fecha final del rango
      * @return Lista de contracargos encontrados
      * @throws EpagosException si hay error en la consulta
      */
     public List<ContracargoDTO> obtenerContracargos(
-            String codigoProvincia,
+            CredencialesEpagosDTO credenciales,
             Date fechaDesde,
             Date fechaHasta) throws EpagosException {
 
-        log.info("→ Consultando contracargos para provincia: {}", codigoProvincia);
+        log.info("→ Consultando contracargos para organismo: {}", credenciales.getIdOrganismo());
 
         // Convertir Date a LocalDate
         LocalDate desde = FechaUtil.convertirALocalDate(fechaDesde);
         LocalDate hasta = FechaUtil.convertirALocalDate(fechaHasta);
 
-        return obtenerContracargos(desde, hasta);
+        return obtenerContracargos(credenciales, desde, hasta);
     }
 
     // ========================================================================
@@ -630,7 +675,7 @@ public class EpagosClientService {
     /**
      * Ejecuta una petición HTTP POST con JSON.
      *
-     * @param endpoint Endpoint relativo (ej: "/obtener_rendiciones")
+     * @param endpoint Endpoint relativo (ej: "/obtenerRendicionFull")
      * @param jsonBody Body de la petición en formato JSON
      * @return HttpResponse de Apache HttpClient
      * @throws Exception si hay error en la petición
@@ -808,46 +853,79 @@ public class EpagosClientService {
     }
 
     // ========================================================================
-    // MÉTODOS PÚBLICOS - UTILIDADES
+    // MÉTODOS PÚBLICOS - UTILIDADES MULTI-TENANT
     // ========================================================================
 
     /**
-     * Invalida el token actual forzando su renovación en el próximo uso.
+     * Invalida el token de un organismo específico forzando su renovación.
      *
      * Útil para:
      * - Testing y debugging
      * - Cuando se detecta que el token no es válido
      * - Forzar renovación manual
+     *
+     * @param idOrganismo ID del organismo
      */
-    public void invalidarToken() {
-        log.info("Invalidando token actual manualmente");
-        this.tokenActual = null;
-        this.tokenExpiracion = null;
+    public void invalidarToken(String idOrganismo) {
+        log.info("Invalidando token para organismo: {}", idOrganismo);
+        tokensPorOrganismo.remove(idOrganismo);
     }
 
     /**
-     * Verifica si hay un token válido en caché.
+     * Invalida TODOS los tokens en caché.
+     *
+     * Útil para:
+     * - Reiniciar completamente el servicio
+     * - Debugging
+     */
+    public void invalidarTodosLosTokens() {
+        log.warn("Invalidando TODOS los tokens en caché (total: {})", tokensPorOrganismo.size());
+        tokensPorOrganismo.clear();
+    }
+
+    /**
+     * Verifica si hay un token válido en caché para un organismo.
      *
      * Considera el margen de seguridad de renovación (1 hora).
      *
+     * @param idOrganismo ID del organismo
      * @return true si hay token válido y vigente
      */
-    public boolean tieneTokenValido() {
-        if (tokenActual == null || tokenExpiracion == null) {
+    public boolean tieneTokenValido(String idOrganismo) {
+        TokenCache cache = tokensPorOrganismo.get(idOrganismo);
+
+        if (cache == null || cache.token == null || cache.expiracion == null) {
             return false;
         }
 
         return LocalDateTime.now()
                 .plusHours(TOKEN_MARGEN_RENOVACION_HORAS)
-                .isBefore(tokenExpiracion);
+                .isBefore(cache.expiracion);
     }
 
     /**
-     * Obtiene la fecha de expiración del token actual.
+     * Obtiene la fecha de expiración del token de un organismo.
      *
+     * @param idOrganismo ID del organismo
      * @return LocalDateTime de expiración, o null si no hay token
      */
-    public LocalDateTime getTokenExpiracion() {
-        return tokenExpiracion;
+    public LocalDateTime getTokenExpiracion(String idOrganismo) {
+        TokenCache cache = tokensPorOrganismo.get(idOrganismo);
+        return cache != null ? cache.expiracion : null;
+    }
+
+    /**
+     * Obtiene estadísticas del caché de tokens.
+     *
+     * @return Mapa con idOrganismo y fecha de expiración de cada token
+     */
+    public Map<String, LocalDateTime> obtenerEstadisticasTokens() {
+        Map<String, LocalDateTime> stats = new HashMap<>();
+        tokensPorOrganismo.forEach((key, cache) -> {
+            if (cache != null) {
+                stats.put(key, cache.expiracion);
+            }
+        });
+        return stats;
     }
 }

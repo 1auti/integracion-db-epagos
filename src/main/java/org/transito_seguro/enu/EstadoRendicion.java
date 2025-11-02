@@ -6,9 +6,9 @@ import lombok.Getter;
 @AllArgsConstructor
 @Getter
 public enum EstadoRendicion {
-    PENDIENTE("Pendiente"),
-    DEPOSITADA("Depositada"),
-    CANCELADA("Cancelada");
+
+    A("ACTIVA"),
+    D("DEPOSITADA");
 
     private final String valor;
 

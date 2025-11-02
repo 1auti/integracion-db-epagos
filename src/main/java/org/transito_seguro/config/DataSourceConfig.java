@@ -19,25 +19,10 @@ import java.util.Properties;
 
 /**
  * Configuración de múltiples DataSources para el sistema de integración e-Pagos.
- * 1. BASE DE DATOS H2 (EN MEMORIA) - PRIMARIA
- *    - Propósito: Caché de infracciones para búsquedas ultra-rápidas
- *    - Ventajas:
- *      • Búsquedas en < 10ms vs 100-500ms en PostgreSQL remoto
- *      • Reduce carga en bases provinciales
- *      • Sincronización controlada
- *    - Contiene: Tabla 'infracciones' con datos sincronizados
- *
- * 2. BASES DE DATOS POSTGRESQL (REMOTAS) - PROVINCIALES
+       BASES DE DATOS POSTGRESQL (REMOTAS) - PROVINCIALES
  *    - Provincias: PBA, MDA, Santa Rosa, Chaco, Entre Ríos, Formosa
  *    - Propósito: Datos maestros de infracciones por provincia
  *    - Acceso: Bajo demanda o sincronización programada
- *
- * FLUJO DE BÚSQUEDA:
- * ==================
- * 1. Buscar primero en H2 (caché)
- * 2. Si no existe, buscar en PostgreSQL provincial
- * 3. Si se encuentra, guardar en H2 para futuras búsquedas
- * 4. Sincronización automática cada X horas
  */
 @Configuration
 @EnableTransactionManagement
@@ -48,29 +33,6 @@ import java.util.Properties;
 )
 @Slf4j
 public class DataSourceConfig {
-
-    // ========================================================================
-    // BASE DE DATOS H2 - PRIMARIA (CACHÉ EN MEMORIA)
-    // ========================================================================
-
-    /**
-     * DataSource primario H2 para caché de infracciones.
-     *
-     * H2 es una base de datos en memoria extremadamente rápida:
-     * - Búsquedas: < 10ms
-     * - Sin latencia de red
-     * - Ideal para caché temporal
-     * @return DataSource H2 configurado
-     */
-    @Primary
-    @Bean(name = "primaryDataSource")
-    @ConfigurationProperties(prefix = "spring.datasource")
-    public DataSource primaryDataSource() {
-        log.info("═══════════════════════════════════════════════════════");
-        log.info("Configurando H2 DataSource PRIMARIO (Caché en memoria)");
-        log.info("═══════════════════════════════════════════════════════");
-        return new HikariDataSource();
-    }
 
     /**
      * EntityManagerFactory para el DataSource primario (H2).

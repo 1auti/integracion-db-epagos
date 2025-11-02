@@ -7,11 +7,10 @@ import lombok.Getter;
 @Getter
 public enum EstadoContracargo {
 
-    PENDIENTE("Pendiente"),
-    RESPONDIDO("Respondido"),
-    ACEPTADO("Aceptado"),
-    RESUELTO("Resuelto");
-
+    // Hay mas estado para estso son los que nos importan
+    P("PENDIENTE"),
+    F("FINALIZADO"),
+    FNF("FINALIZADO NO FAVORABLE");
     private final String valor;
 
 

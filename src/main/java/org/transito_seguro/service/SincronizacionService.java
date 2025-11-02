@@ -6,8 +6,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.transito_seguro.dto.contracargos.ContracargoDTO;
+import org.transito_seguro.dto.credenciales.CredencialesEpagosDTO;
 import org.transito_seguro.dto.rendiciones.RendicionDTO;
 import org.transito_seguro.exception.EpagosException;
+import org.transito_seguro.factory.CredencialesFactory;
 import org.transito_seguro.model.ResultadoSincronizacion;
 
 import java.time.LocalDate;
@@ -31,10 +33,11 @@ import java.util.List;
  *
  * FLUJO DE SINCRONIZACIÓN:
  * 1. Validar parámetros de entrada (provincia, fechas)
- * 2. Obtener datos de e-Pagos (rendiciones y/o contracargos) vía EpagosClientService
- * 3. Procesar datos obtenidos (actualizar BD) vía servicios especializados
- * 4. Consolidar resultados y métricas
- * 5. Retornar resultado estructurado
+ * 2. Obtener credenciales de e-Pagos desde CredencialesFactory
+ * 3. Obtener datos de e-Pagos (rendiciones y/o contracargos) vía EpagosClientService
+ * 4. Procesar datos obtenidos (actualizar BD) vía servicios especializados
+ * 5. Consolidar resultados y métricas
+ * 6. Retornar resultado estructurado
  *
  * ARQUITECTURA:
  *
@@ -42,20 +45,28 @@ import java.util.List;
  *           ↓
  *  SincronizacionService (Coordinador - ESTE SERVICIO)
  *           ↓
- *    ┌──────┴──────┐
- *    ↓             ↓
- * EpagosClientService (Consulta API externa)
- *    │             │
- *    │  rendiciones│  contracargos
- *    ↓             ↓
- * RendicionService  ContracargoService (Procesamiento y BD)
- *
+ *    ┌──────┴──────────┐
+ *    ↓                 ↓
+ * CredencialesFactory  EpagosClientService (Consulta API externa)
+ *    ↓                 ↓
+ * Credenciales       Rendiciones/Contracargos
+ *                      ↓
+ *               RendicionService (Procesamiento y BD)
  */
 @Service
 @Slf4j
 public class SincronizacionService {
 
+    // ========================================================================
+    // INYECCIÓN DE DEPENDENCIAS
+    // ========================================================================
 
+    /**
+     * Factory para obtener credenciales de e-Pagos por provincia.
+     * Carga credenciales desde BD al inicio y las mantiene en memoria.
+     */
+    @Autowired
+    private CredencialesFactory credencialesFactory;
 
     /**
      * Cliente para comunicación con API de e-Pagos.
@@ -108,10 +119,11 @@ public class SincronizacionService {
      *
      * FLUJO COMPLETO:
      * 1. Validar parámetros
-     * 2. Calcular rango de fechas
-     * 3. Sincronizar rendiciones (consulta e-Pagos → procesar BD)
-     * 4. Sincronizar contracargos (consulta e-Pagos → procesar BD) - si está habilitado
-     * 5. Consolidar métricas
+     * 2. Obtener credenciales de e-Pagos desde CredencialesFactory
+     * 3. Calcular rango de fechas
+     * 4. Sincronizar rendiciones (consulta e-Pagos → procesar BD)
+     * 5. Sincronizar contracargos (consulta e-Pagos → procesar BD) - si está habilitado
+     * 6. Consolidar métricas
      *
      * TRANSACCIONALIDAD:
      * - @Transactional: Si alguna operación falla, se hace rollback de toda la transacción
@@ -119,10 +131,11 @@ public class SincronizacionService {
      *
      * CASOS DE USO:
      * - Llamado desde SincronizacionScheduler (cron diario)
+     * - Llamado desde BusquedaMultiProvincialService (múltiples provincias en paralelo)
      * - Llamado desde API REST para sincronización manual
      * - Reproceso de datos de una provincia
      *
-     * @param codigoProvincia Código de la provincia (ej: "PBA", "MDA", "CHACO")
+     * @param codigoProvincia Código de la provincia (ej: "Buenos Aires", "Avellaneda", "Chaco")
      * @param diasAtras Cantidad de días hacia atrás para consultar (1-90)
      * @return ResultadoSincronizacion con métricas consolidadas
      * @throws EpagosException si hay error de comunicación con e-Pagos
@@ -145,6 +158,22 @@ public class SincronizacionService {
         // Validar parámetros de entrada
         validarParametros(codigoProvincia, diasAtras);
 
+        // ================================================================
+        // NUEVO: OBTENER CREDENCIALES DESDE FACTORY
+        // ================================================================
+        log.debug("→ Obteniendo credenciales de e-Pagos para: {}", codigoProvincia);
+
+        CredencialesEpagosDTO credenciales = credencialesFactory.getCredenciales(codigoProvincia);
+
+        if (credenciales == null) {
+            String error = "No se encontraron credenciales de e-Pagos para provincia: " + codigoProvincia;
+            log.error("❌ {}", error);
+            throw new EpagosException(error);
+        }
+
+        log.info("✓ Credenciales obtenidas: Organismo {}", credenciales.getIdOrganismo());
+        // ================================================================
+
         // Calcular rango de fechas
         LocalDate fechaHasta = LocalDate.now();
         LocalDate fechaDesde = fechaHasta.minusDays(diasAtras);
@@ -164,6 +193,7 @@ public class SincronizacionService {
             log.info("─────────────────────────────────────────────────────────────");
 
             int cobranzasActualizadas = sincronizarRendiciones(
+                    credenciales,      // ← NUEVO: Pasar credenciales
                     codigoProvincia,
                     fechaDesde,
                     fechaHasta,
@@ -182,6 +212,7 @@ public class SincronizacionService {
                 log.info("─────────────────────────────────────────────────────────────");
 
                 int contracargosProcesados = sincronizarContracargos(
+                        credenciales,  // ← NUEVO: Pasar credenciales
                         codigoProvincia,
                         fechaDesde,
                         fechaHasta,
@@ -249,8 +280,6 @@ public class SincronizacionService {
         return sincronizarProvincia(codigoProvincia, this.diasAtras);
     }
 
-
-
     // ========================================================================
     // MÉTODOS PRIVADOS - SINCRONIZACIÓN ESPECIALIZADA
     // ========================================================================
@@ -265,6 +294,7 @@ public class SincronizacionService {
      * 3. Procesar y actualizar BD (RendicionService)
      * 4. Actualizar métricas del resultado
      *
+     * @param credenciales Credenciales de e-Pagos para esta provincia
      * @param codigoProvincia Código de provincia
      * @param fechaDesde Fecha inicial
      * @param fechaHasta Fecha final
@@ -273,6 +303,7 @@ public class SincronizacionService {
      * @throws EpagosException si hay error
      */
     private int sincronizarRendiciones(
+            CredencialesEpagosDTO credenciales,
             String codigoProvincia,
             LocalDate fechaDesde,
             LocalDate fechaHasta,
@@ -283,9 +314,9 @@ public class SincronizacionService {
             log.debug("  1. Consultando rendiciones en e-Pagos...");
 
             List<RendicionDTO> rendiciones = epagosClientService.obtenerRendiciones(
-                    codigoProvincia,
-                    convertirADate(fechaDesde),
-                    convertirADate(fechaHasta)
+                    credenciales,  // ← NUEVO: Usar credenciales específicas de la provincia
+                    fechaDesde,
+                    fechaHasta
             );
 
             // PASO 2: VALIDAR respuesta
@@ -340,6 +371,7 @@ public class SincronizacionService {
      * 3. Procesar y registrar en BD (ContracargoService)
      * 4. Actualizar métricas
      *
+     * @param credenciales Credenciales de e-Pagos para esta provincia
      * @param codigoProvincia Código de provincia
      * @param fechaDesde Fecha inicial
      * @param fechaHasta Fecha final
@@ -348,6 +380,7 @@ public class SincronizacionService {
      * @throws EpagosException si hay error
      */
     private int sincronizarContracargos(
+            CredencialesEpagosDTO credenciales,
             String codigoProvincia,
             LocalDate fechaDesde,
             LocalDate fechaHasta,
@@ -358,9 +391,9 @@ public class SincronizacionService {
             log.debug("  1. Consultando contracargos en e-Pagos...");
 
             List<ContracargoDTO> contracargos = epagosClientService.obtenerContracargos(
-                    codigoProvincia,
-                    convertirADate(fechaDesde),
-                    convertirADate(fechaHasta)
+                    credenciales,  // ← NUEVO: Usar credenciales específicas de la provincia
+                    fechaDesde,
+                    fechaHasta
             );
 
             // PASO 2: VALIDAR respuesta
@@ -487,62 +520,5 @@ public class SincronizacionService {
         }
 
         log.info("╚═══════════════════════════════════════════════════════════════╝");
-    }
-
-    // ========================================================================
-    // MÉTODOS PÚBLICOS - UTILIDADES Y HEALTH CHECKS
-    // ========================================================================
-
-    /**
-     * Verifica la conectividad con e-Pagos.
-     *
-     * Útil para:
-     * - Health checks del sistema
-     * - Validación antes de operaciones masivas
-     * - Diagnóstico de problemas
-     *
-     * @return true si e-Pagos está disponible y responde correctamente
-     */
-    public boolean verificarConectividad() {
-        try {
-            log.debug("Verificando conectividad con e-Pagos...");
-
-            // Intentar obtener un token válido
-            String token = epagosClientService.obtenerTokenValido();
-
-            boolean conectado = (token != null && !token.isEmpty());
-
-            if (conectado) {
-                log.debug("✓ e-Pagos está disponible");
-            } else {
-                log.warn("✗ e-Pagos no está disponible o no responde");
-            }
-
-            return conectado;
-
-        } catch (Exception e) {
-            log.error("Error al verificar conectividad con e-Pagos: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Obtiene el estado del token de autenticación.
-     *
-     * @return Información sobre el token actual (validez, expiración)
-     */
-    public String obtenerEstadoToken() {
-        try {
-            boolean tieneTokenValido = epagosClientService.tieneTokenValido();
-
-            if (tieneTokenValido) {
-                return "Token válido hasta: " + epagosClientService.getTokenExpiracion();
-            } else {
-                return "Token inválido o expirado";
-            }
-
-        } catch (Exception e) {
-            return "Error al verificar token: " + e.getMessage();
-        }
     }
 }
