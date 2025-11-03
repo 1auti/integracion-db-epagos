@@ -20,39 +20,35 @@ import java.util.List;
 @AllArgsConstructor
 public class RendicionesResponseDTO implements Serializable {
 
-    private static final long serialVersionUID = 1L;
-
     /**
-     * Código de respuesta
-     * 05001: Rendiciones devueltas (éxito)
-     * 05002: Error al validar el token
-     * 05003: Error interno
-     * 05004: Rango de fechas supera el límite
-     * 05005: Error al validar parámetro
+     * Código de respuesta del servicio.
+     * Ejemplo: 5001 indica "Rendiciones devueltas"
      */
     @JsonProperty("id_resp")
-    private String idResp;
+    private Integer idRespuesta;
 
     /**
-     * Descripción de la respuesta
+     * Mensaje descriptivo de la respuesta.
+     * Ejemplo: "Rendiciones devueltas"
      */
     @JsonProperty("respuesta")
     private String respuesta;
 
     /**
-     * Token utilizado en la consulta
+     * Token de seguridad generado por e-pagos para la sesión.
      */
     @JsonProperty("token")
     private String token;
 
     /**
-     * Código del organismo
+     * Identificador del organismo que realiza la consulta.
      */
     @JsonProperty("id_organismo")
     private Integer idOrganismo;
 
     /**
-     * Lista de rendiciones encontradas
+     * Lista de rendiciones obtenidas en el período consultado.
+     * Cada rendición contiene información detallada de transacciones y contracargos.
      */
     @JsonProperty("rendicion")
     private List<RendicionDTO> rendiciones;

@@ -138,21 +138,10 @@ public class RendicionDTO implements Serializable {
     private List<DetalleRendicionDTO> detalles;
 
     @JsonProperty("Contracargos")
-    private List<ContracargoDTO> contracargos;
+    private List<DetalleContracargoDTO> contracargos;
+
+    @JsonProperty("Contenido")
+    private String contenido;
 
 
-    @Override
-    public String toString() {
-        return "RendicionDTO{" +
-                "numero=" + numero +
-                ", secuencia=" + secuencia +
-                ", convenio=" + convenio +
-                ", estado='" + estado + '\'' +
-                ", fechaDesde=" + fechaDesde +
-                ", fechaHasta=" + fechaHasta +
-                ", monto=" + monto +
-                ", montoDepositado=" + montoDepositado +
-                ", cantidad=" + cantidad +
-                '}';
-    }
 }

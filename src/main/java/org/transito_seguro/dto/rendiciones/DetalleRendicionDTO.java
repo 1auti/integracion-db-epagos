@@ -47,14 +47,4 @@ public class DetalleRendicionDTO implements Serializable {
     private Boolean depositable;
 
 
-
-    @Override
-    public String toString() {
-        return "DetalleRendicionDTO{" +
-                "codigoUnicoTransaccion=" + codigoUnicoTransaccion +
-                ", monto=" + monto +
-                ", numeroOperacion='" + numeroOperacion + '\'' +
-                ", depositable=" + depositable +
-                '}';
-    }
 }

@@ -5,9 +5,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.transito_seguro.dto.contracargos.ContracargoDTO;
-import org.transito_seguro.dto.credenciales.CredencialesEpagosDTO;
 import org.transito_seguro.dto.rendiciones.RendicionDTO;
+import org.transito_seguro.dto.rendiciones.request.RendicionesRequestDTO;
+import org.transito_seguro.dto.rendiciones.response.RendicionesResponseDTO;
 import org.transito_seguro.exception.EpagosException;
 import org.transito_seguro.factory.CredencialesFactory;
 import org.transito_seguro.model.ResultadoSincronizacion;
@@ -163,7 +163,7 @@ public class SincronizacionService {
         // ================================================================
         log.debug("→ Obteniendo credenciales de e-Pagos para: {}", codigoProvincia);
 
-        CredencialesEpagosDTO credenciales = credencialesFactory.getCredenciales(codigoProvincia);
+        RendicionesRequestDTO credenciales = credencialesFactory.getCredenciales(codigoProvincia);
 
         if (credenciales == null) {
             String error = "No se encontraron credenciales de e-Pagos para provincia: " + codigoProvincia;
@@ -193,7 +193,7 @@ public class SincronizacionService {
             log.info("─────────────────────────────────────────────────────────────");
 
             int cobranzasActualizadas = sincronizarRendiciones(
-                    credenciales,      // ← NUEVO: Pasar credenciales
+                    credenciales,
                     codigoProvincia,
                     fechaDesde,
                     fechaHasta,
@@ -206,24 +206,24 @@ public class SincronizacionService {
             // ================================================================
             // PASO 2: SINCRONIZAR CONTRACARGOS (si está habilitado)
             // ================================================================
-            if (contracargoEnabled) {
-                log.info("─────────────────────────────────────────────────────────────");
-                log.info("▶ PASO 2/2: Sincronizando CONTRACARGOS");
-                log.info("─────────────────────────────────────────────────────────────");
-
-                int contracargosProcesados = sincronizarContracargos(
-                        credenciales,  // ← NUEVO: Pasar credenciales
-                        codigoProvincia,
-                        fechaDesde,
-                        fechaHasta,
-                        resultado
-                );
-
-                resultado.setContracargosProcesados(contracargosProcesados);
-                log.info("✓ Contracargos completados: {} procesados", contracargosProcesados);
-            } else {
-                log.debug("⊗ Contracargos deshabilitados en configuración");
-            }
+//            if (contracargoEnabled) {
+//                log.info("─────────────────────────────────────────────────────────────");
+//                log.info("▶ PASO 2/2: Sincronizando CONTRACARGOS");
+//                log.info("─────────────────────────────────────────────────────────────");
+//
+//                int contracargosProcesados = sincronizarContracargos(
+//                        credenciales,  // ← NUEVO: Pasar credenciales
+//                        codigoProvincia,
+//                        fechaDesde,
+//                        fechaHasta,
+//                        resultado
+//                );
+//
+//                resultado.setContracargosProcesados(contracargosProcesados);
+//                log.info("✓ Contracargos completados: {} procesados", contracargosProcesados);
+//            } else {
+//                log.debug("⊗ Contracargos deshabilitados en configuración");
+//            }
 
             // ================================================================
             // FINALIZACIÓN
@@ -303,7 +303,7 @@ public class SincronizacionService {
      * @throws EpagosException si hay error
      */
     private int sincronizarRendiciones(
-            CredencialesEpagosDTO credenciales,
+            RendicionesRequestDTO credenciales,
             String codigoProvincia,
             LocalDate fechaDesde,
             LocalDate fechaHasta,
@@ -313,18 +313,22 @@ public class SincronizacionService {
             // PASO 1: CONSULTAR RENDICIONES desde e-Pagos
             log.debug("  1. Consultando rendiciones en e-Pagos...");
 
-            List<RendicionDTO> rendiciones = epagosClientService.obtenerRendiciones(
-                    credenciales,  // ← NUEVO: Usar credenciales específicas de la provincia
+            RendicionesResponseDTO rendiciones = epagosClientService.obtenerRendiciones(
+                    credenciales.getIdOrganismo(),
+                    credenciales.getIdUsuario(),
+                    credenciales.getPassword(),
+                    credenciales.getHash(),
                     fechaDesde,
-                    fechaHasta
+                    fechaHasta,
+                    credenciales.getConvenios()
             );
 
             // PASO 2: VALIDAR respuesta
-            if (rendiciones == null) {
-                rendiciones = new ArrayList<>();
+            if (rendiciones.getRendiciones() == null) {
+                log.warn("Las rendicioens no pueden estar vacias ");
             }
 
-            int cantidadRendiciones = rendiciones.size();
+            int cantidadRendiciones = rendiciones.getRendiciones().size();
             resultado.setRendicionesObtenidas(cantidadRendiciones);
 
             log.info("  ✓ Rendiciones obtenidas: {}", cantidadRendiciones);
@@ -340,7 +344,7 @@ public class SincronizacionService {
 
             int cobranzasActualizadas = rendicionService.procesarRendiciones(
                     codigoProvincia,
-                    rendiciones
+                    rendiciones.getRendiciones()
             );
 
             log.info("  ✓ Cobranzas actualizadas: {}", cobranzasActualizadas);
@@ -359,87 +363,87 @@ public class SincronizacionService {
         }
     }
 
-    /**
-     * Sincroniza SOLO contracargos para una provincia.
-     *
-     * Similar a sincronizarRendiciones pero para contracargos.
-     * Actualmente en implementación básica.
-     *
-     * FLUJO:
-     * 1. Consultar contracargos desde e-Pagos (EpagosClientService)
-     * 2. Validar datos obtenidos
-     * 3. Procesar y registrar en BD (ContracargoService)
-     * 4. Actualizar métricas
-     *
-     * @param credenciales Credenciales de e-Pagos para esta provincia
-     * @param codigoProvincia Código de provincia
-     * @param fechaDesde Fecha inicial
-     * @param fechaHasta Fecha final
-     * @param resultado Objeto para acumular métricas
-     * @return Cantidad de contracargos procesados
-     * @throws EpagosException si hay error
-     */
-    private int sincronizarContracargos(
-            CredencialesEpagosDTO credenciales,
-            String codigoProvincia,
-            LocalDate fechaDesde,
-            LocalDate fechaHasta,
-            ResultadoSincronizacion resultado) throws EpagosException {
-
-        try {
-            // PASO 1: CONSULTAR CONTRACARGOS desde e-Pagos
-            log.debug("  1. Consultando contracargos en e-Pagos...");
-
-            List<ContracargoDTO> contracargos = epagosClientService.obtenerContracargos(
-                    credenciales,  // ← NUEVO: Usar credenciales específicas de la provincia
-                    fechaDesde,
-                    fechaHasta
-            );
-
-            // PASO 2: VALIDAR respuesta
-            if (contracargos == null) {
-                contracargos = new ArrayList<>();
-            }
-
-            int cantidadContracargos = contracargos.size();
-            resultado.setContracargosObtenidos(cantidadContracargos);
-
-            log.info("  ✓ Contracargos obtenidos: {}", cantidadContracargos);
-
-            // Si no hay contracargos, retornar sin procesar
-            if (cantidadContracargos == 0) {
-                log.info("  ⊗ No hay contracargos para procesar");
-                return 0;
-            }
-
-            // PASO 3: PROCESAR CONTRACARGOS y registrar en BD
-            log.debug("  2. Procesando contracargos y actualizando BD...");
-
-            // TODO: Implementar cuando ContracargoService esté completo
-            // int contracargosProcesados = contracargoService.procesarContracargos(
-            //         codigoProvincia,
-            //         contracargos
-            // );
-
-            // Implementación temporal - solo logging
-            log.warn("  ⚠ ContracargoService aún no implementado - solo se registran en log");
-            int contracargosProcesados = contracargos.size();
-
-            log.info("  ✓ Contracargos procesados: {}", contracargosProcesados);
-
-            return contracargosProcesados;
-
-        } catch (EpagosException e) {
-            log.error("  ✗ Error al sincronizar contracargos: {}", e.getMessage());
-            resultado.agregarError("Contracargos: " + e.getMessage());
-            throw e;
-
-        } catch (Exception e) {
-            log.error("  ✗ Error inesperado en contracargos: {}", e.getMessage(), e);
-            resultado.agregarError("Contracargos: Error inesperado");
-            throw new EpagosException("Error al procesar contracargos", e);
-        }
-    }
+//    /**
+//     * Sincroniza SOLO contracargos para una provincia.
+//     *
+//     * Similar a sincronizarRendiciones pero para contracargos.
+//     * Actualmente en implementación básica.
+//     *
+//     * FLUJO:
+//     * 1. Consultar contracargos desde e-Pagos (EpagosClientService)
+//     * 2. Validar datos obtenidos
+//     * 3. Procesar y registrar en BD (ContracargoService)
+//     * 4. Actualizar métricas
+//     *
+//     * @param credenciales Credenciales de e-Pagos para esta provincia
+//     * @param codigoProvincia Código de provincia
+//     * @param fechaDesde Fecha inicial
+//     * @param fechaHasta Fecha final
+//     * @param resultado Objeto para acumular métricas
+//     * @return Cantidad de contracargos procesados
+//     * @throws EpagosException si hay error
+//     */
+//    private int sincronizarContracargos(
+//            CredencialesDTO credenciales,
+//            String codigoProvincia,
+//            LocalDate fechaDesde,
+//            LocalDate fechaHasta,
+//            ResultadoSincronizacion resultado) throws EpagosException {
+//
+//        try {
+//            // PASO 1: CONSULTAR CONTRACARGOS desde e-Pagos
+//            log.debug("  1. Consultando contracargos en e-Pagos...");
+//
+//            List<ContracargoDTO> contracargos = epagosClientService.obtenerContracargos(
+//                    credenciales,  // ← NUEVO: Usar credenciales específicas de la provincia
+//                    fechaDesde,
+//                    fechaHasta
+//            );
+//
+//            // PASO 2: VALIDAR respuesta
+//            if (contracargos == null) {
+//                contracargos = new ArrayList<>();
+//            }
+//
+//            int cantidadContracargos = contracargos.size();
+//            resultado.setContracargosObtenidos(cantidadContracargos);
+//
+//            log.info("  ✓ Contracargos obtenidos: {}", cantidadContracargos);
+//
+//            // Si no hay contracargos, retornar sin procesar
+//            if (cantidadContracargos == 0) {
+//                log.info("  ⊗ No hay contracargos para procesar");
+//                return 0;
+//            }
+//
+//            // PASO 3: PROCESAR CONTRACARGOS y registrar en BD
+//            log.debug("  2. Procesando contracargos y actualizando BD...");
+//
+//            // TODO: Implementar cuando ContracargoService esté completo
+//            // int contracargosProcesados = contracargoService.procesarContracargos(
+//            //         codigoProvincia,
+//            //         contracargos
+//            // );
+//
+//            // Implementación temporal - solo logging
+//            log.warn("  ⚠ ContracargoService aún no implementado - solo se registran en log");
+//            int contracargosProcesados = contracargos.size();
+//
+//            log.info("  ✓ Contracargos procesados: {}", contracargosProcesados);
+//
+//            return contracargosProcesados;
+//
+//        } catch (EpagosException e) {
+//            log.error("  ✗ Error al sincronizar contracargos: {}", e.getMessage());
+//            resultado.agregarError("Contracargos: " + e.getMessage());
+//            throw e;
+//
+//        } catch (Exception e) {
+//            log.error("  ✗ Error inesperado en contracargos: {}", e.getMessage(), e);
+//            resultado.agregarError("Contracargos: Error inesperado");
+//            throw new EpagosException("Error al procesar contracargos", e);
+//        }
+//    }
 
     // ========================================================================
     // MÉTODOS PRIVADOS - VALIDACIONES

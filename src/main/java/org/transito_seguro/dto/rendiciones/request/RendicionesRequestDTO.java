@@ -1,21 +1,14 @@
 package org.transito_seguro.dto.rendiciones.request;
-
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.transito_seguro.dto.CredencialesDTO;
-import org.transito_seguro.dto.rendiciones.FiltroRendicionDTO;
+
 
 import java.io.Serializable;
 
 /**
- * DTO para la solicitud de obtención de rendiciones.
- * Método SOAP: obtener_rendiciones
- *
- * Permite consultar las rendiciones diarias de los cobros procesados
- * en un rango de fechas específico.
+ DTO para solicitar las rendiciones al Servicio Diego
  */
 @Getter
 @Setter
@@ -23,26 +16,18 @@ import java.io.Serializable;
 @NoArgsConstructor
 public class RendicionesRequestDTO implements Serializable {
 
-    private static final long serialVersionUID = 1L;
+    private String idOrganismo;
 
-    /**
-     * Versión del protocolo de e-Pagos
-     * Valor fijo: "2.0" o "2.1"
-     */
-    @JsonProperty("version")
-    private String version = "2.1";
+    private String idUsuario;
 
-    /**
-     * Credenciales de autenticación
-     */
-    @JsonProperty("credenciales")
-    private CredencialesDTO credenciales;
+    private String password;
 
-    /**
-     * Filtros para la búsqueda de rendiciones
-     */
-    @JsonProperty("rendicion")
-    private FiltroRendicionDTO rendicion;
+    private String hash;
 
+    private String fechaDesde;
+
+    private String fechaHasta;
+
+    private String convenios;
 
 }
