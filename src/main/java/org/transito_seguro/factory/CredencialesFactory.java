@@ -24,19 +24,18 @@ import java.util.stream.Collectors;
  * de credenciales, eliminando CredencialesDTO.
  *
  * Cambios principales:
- * ✅ Usa RendicionesRequestDTO en lugar de CredencialesDTO
- * ✅ Caché por provincia con credenciales base (sin fechas ni convenios)
+ * ✅ Caché por provincia con credenciales base (sin fechas)
  * ✅ Parseo JSON actualizado para nueva estructura de campos
  * ✅ Validaciones ajustadas a los campos del nuevo DTO
  *
  * Responsabilidades:
  * - Carga inicial de credenciales desde base de datos al iniciar la aplicación
  * - Caché en memoria de credenciales por provincia
- * - Parseo de JSON desde campo `variables` en tabla `concesion_configuracion_convenio`
+ * - Parseo de JSON desde campo `variables`y convenio en tabla `concesion_configuracion_convenio`
  * - Validación de integridad de credenciales
  * - Provisión de credenciales a servicios que consultan e-Pagos
  *
- * Nota: Las credenciales base NO incluyen fechas ni convenios.
+ * Nota: Las credenciales base NO incluyen fechas
  *       Esos campos se deben completar al momento de hacer la consulta.
  */
 @Component
@@ -156,8 +155,11 @@ public class CredencialesFactory {
         JdbcTemplate jdbc = new JdbcTemplate(ds);
 
         // Query para obtener configuración activa
-        String sql = "SELECT id_concesion, variables FROM concesion_configuracion_convenio " +
-                "WHERE is_activo = true AND variables IS NOT NULL LIMIT 1";
+        String sql = "SELECT id_concesion, variables, convenio FROM concesion_configuracion_convenio " +
+                "WHERE is_activo = true " +
+                "AND variables IS NOT NULL " +
+                "AND convenio IS NOT NULL " +
+                "LIMIT 1";
 
         List<Map<String, Object>> rows = jdbc.queryForList(sql);
 
@@ -165,8 +167,11 @@ public class CredencialesFactory {
             throw new Exception("No hay configuración activa en la base de datos");
         }
 
+        Map<String,Object> row = rows.get(0);
+
         // Extraer JSON del campo 'variables'
-        String json = (String) rows.get(0).get("variables");
+        String json = (String) row.get("variables");
+        String convenio = (String) row.get("convenio");
 
         if (json == null || json.trim().isEmpty()) {
             throw new Exception("Campo 'variables' está vacío");
@@ -176,7 +181,7 @@ public class CredencialesFactory {
                 json.length() > 100 ? json.substring(0, 100) + "..." : json);
 
         // Parsear JSON a RendicionesRequestDTO
-        return parsearJSON(json, provincia);
+        return parsearJSON(json,convenio, provincia);
     }
 
     /**
@@ -199,7 +204,7 @@ public class CredencialesFactory {
      * @return RendicionesRequestDTO con credenciales base
      * @throws Exception si el JSON es inválido o faltan campos requeridos
      */
-    private RendicionesRequestDTO parsearJSON(String json, String provincia) throws Exception {
+    private RendicionesRequestDTO parsearJSON(String json, String convenio,  String provincia) throws Exception {
 
         // Parsear JSON a lista de VariableConfigDTO
         List<VariableConfigDTO> vars = objectMapper.readValue(
@@ -227,7 +232,7 @@ public class CredencialesFactory {
 
         // Convenios es opcional en la configuración, se puede pasar null
         // y establecerse luego al momento de la consulta
-        request.setConvenios(map.getOrDefault("convenios", null));
+        request.setConvenios(map.getOrDefault("convenio", convenio));
 
         // Las fechas NO se cargan de la configuración
         // Se establecerán dinámicamente al hacer cada consulta
