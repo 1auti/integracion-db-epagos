@@ -39,7 +39,7 @@ public class EpagosHttpClientConfig {
      * URL base de la API de e-Pagos.
      * Ejemplo: https://www.epagos.com/svc/wsespeciales.asmx
      */
-    @Value("${epagos.soap.url}")
+    @Value("${epagos.url}")
     private String apiUrl;
 
     /**

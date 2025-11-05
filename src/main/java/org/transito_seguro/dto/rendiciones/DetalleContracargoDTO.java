@@ -50,4 +50,7 @@ public class DetalleContracargoDTO {
      */
     @JsonProperty("Numero_operacion")
     private String numeroOperacion;
+
+    @JsonProperty("Numero_rendicion")
+    private Long numeroRendicion;
 }

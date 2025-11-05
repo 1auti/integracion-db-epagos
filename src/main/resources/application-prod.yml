@@ -12,50 +12,6 @@ spring:
     name: integracion-epagos-prod
 
   # ==========================================================================
-  # BASE DE DATOS H2 - CACHÉ PRIMARIO (EN MEMORIA)
-  # ==========================================================================
-  datasource:
-    # H2 en memoria para producción (configuración optimizada)
-    url: jdbc:h2:mem:infracciones_cache;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
-
-    # Pool optimizado para producción
-    hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
-      pool-name: H2-Cache-Pool-PROD
-      leak-detection-threshold: 60000
-
-  # Consola H2 DESHABILITADA en producción
-  h2:
-    console:
-      enabled: false
-
-  # ==========================================================================
-  # CONFIGURACIÓN JPA/HIBERNATE
-  # ==========================================================================
-  jpa:
-    # NO mostrar SQL en producción
-    show-sql: false
-    properties:
-      hibernate:
-        format_sql: false
-        # create-drop en producción también porque H2 es caché temporal
-        ddl-auto: create-drop
-        dialect: org.hibernate.dialect.H2Dialect
-
-        # Optimizaciones de producción
-        jdbc:
-          batch_size: 100
-        order_inserts: true
-        order_updates: true
-
-  # ==========================================================================
   # CONFIGURACIÓN DE SERVIDOR WEB
   # ==========================================================================
 server:

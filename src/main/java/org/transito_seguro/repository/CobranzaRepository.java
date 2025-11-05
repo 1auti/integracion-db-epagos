@@ -15,7 +15,7 @@ public interface CobranzaRepository extends JpaRepository<Cobranza,Integer> {
      * @param numerosTransaccion Lista de números de transacción a buscar
      * @return Lista de cobranzas encontradas
      */
-    @Query("SELECT c FROM Cobranza c WHERE c.numeroTransaccion IN :numerosTransaccion")
+    @Query("SELECT c FROM Cobranza c WHERE c.numero_transaccion IN :numerosTransaccion")
     List<Cobranza> buscarPorNumerosTransaccion(
             @Param("numerosTransaccion") List<String> numerosTransaccion
     );

@@ -201,42 +201,6 @@ public class SincronizacionScheduler {
         });
     }
 
-    /**
-     * Job de verificación de salud del sistema.
-     * Se ejecuta cada hora para verificar:
-     * - Conectividad con e-Pagos
-     * - Validez del token de autenticación
-     * PROPÓSITO:
-     * - Detección temprana de problemas de conectividad
-     * - Monitoreo proactivo del sistema
-     * - Alertas antes de la sincronización diaria
-     *
-     * Este health check es complementario al de Spring Boot Actuator.
-     */
-    @Scheduled(cron = "0 0 * * * ?")
-    public void verificarSaludSistema() {
 
-        if (!schedulerEnabled) {
-            return;
-        }
-
-        try {
-            log.debug("🔍 Verificando salud del sistema e-Pagos...");
-
-            // Verificar conectividad básica usando SincronizacionService
-            boolean sistemaDisponible = sincronizacionService.verificarConectividad();
-
-            if (!sistemaDisponible) {
-                log.warn("   ALERTA: Sistema e-Pagos no responde correctamente");
-                log.warn("   Estado del token: {}",
-                        sincronizacionService.obtenerEstadoToken());
-            } else {
-                log.debug("✓ Sistema e-Pagos operativo");
-            }
-
-        } catch (Exception e) {
-            log.error("❌ Error en verificación de salud: {}", e.getMessage());
-        }
-    }
 
 }

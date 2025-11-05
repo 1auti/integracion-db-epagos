@@ -57,14 +57,14 @@ public class Cobranza {
     private Date rend_desde;
     private Date rend_hasta;
 
-    private float importe_pagado;
-    private float importe_neto;
-    private float comision_entidad;
-    private float rend_monto_depositado;
-    private float rend_comision;
-    private float rend_iva;
-    private float rend_monto;
-    private float rend_medio_pago;
+    private Double importe_pagado;
+    private Double importe_neto;
+    private Double comision_entidad;
+    private Double rend_monto_depositado;
+    private Double rend_comision;
+    private Double rend_iva;
+    private Double rend_monto;
+    private Integer rend_medio_pago;
 
 
 

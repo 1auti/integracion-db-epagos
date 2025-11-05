@@ -20,7 +20,6 @@ public class RendicionCobro {
 
     private Integer id_concesion;
     private Integer id_entidad_convenio;
-    private Integer id_entidad_proceso;
     private Integer status;
     private Integer usuario_alta;
     private Integer usuario_mod;
@@ -34,6 +33,7 @@ public class RendicionCobro {
     private String procesador;
     private String observacion;
     private String file_path;
+
 
 }
 

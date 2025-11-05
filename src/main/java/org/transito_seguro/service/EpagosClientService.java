@@ -68,14 +68,14 @@ public class EpagosClientService {
      *
      * NOTA: Ya no se conecta directamente a e-Pagos, sino al proxy mapper.
      */
-    @Value("${epagos.proxy.url}")
+    @Value("${epagos.url}")
     private String proxyMapperUrl;
 
     /**
      * Endpoint específico para obtener rendiciones.
      * Ejemplo: /obtenerRendicionFull
      */
-    @Value("${epagos.proxy.endpoint.rendiciones:/obtenerRendicionFull}")
+    @Value("${epagos.proxy.endpoint.rendiciones:obtenerRendicionFull.php}")
     private String rendicionesEndpoint;
 
     /**
@@ -191,8 +191,8 @@ public class EpagosClientService {
                     idOrganismo, idUsuario, password, hash, fechaDesde, fechaHasta, convenios
             );
 
-            log.debug("Request rendiciones: organismo={}, fechaDesde={}, fechaHasta={}, convenios={}",
-                    idOrganismo, fechaDesde, fechaHasta, convenios);
+            log.debug("Request rendiciones: organismo={}, idUsuario={}, hash={} , pass={}, fechaDesde={},  fechaHasta={}, convenios={}",
+                    idOrganismo, idUsuario, hash, password,  fechaDesde, fechaHasta, convenios);
 
             // Invocar Proxy Mapper con reintentos
             RendicionesResponseDTO response = ejecutarConReintentos(

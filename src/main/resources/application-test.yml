@@ -1,0 +1,106 @@
+# ============================================================================
+# application-test.yml - Configuración de TESTING
+# ============================================================================
+# Este archivo contiene la configuración para el entorno de testing/QA
+# Usar: java -jar app.jar --spring.profiles.active=test
+# ============================================================================
+
+spring:
+  application:
+    name: integracion-epagos-test
+
+
+provincia:
+  mapping:
+    TEST: "test"
+
+  # ==========================================================================
+  # CONFIGURACIÓN DE SERVIDOR WEB (TOMCAT EMBEBIDO)
+  # ==========================================================================
+server:
+  port: 8081  # Puerto diferente para no conflictuar con dev/prod
+
+
+  # Configuración de timeouts
+  tomcat:
+    connection-timeout: 60000  # 60 segundos
+    threads:
+      max: 30                  # Threads moderados para testing
+      min-spare: 5             # Threads mínimos en espera
+    max-connections: 50        # Conexiones simultáneas moderadas
+
+# ============================================================================
+# BASES DE DATOS POSTGRESQL - PROVINCIALES (TESTING)
+# ============================================================================
+# Variables de entorno esperadas (bases de datos de testing):
+# - TEST_DB_URL, TEST_DB_USERNAME, TEST_DB_PASSWORD
+# ============================================================================
+postgresql:
+  datasources:
+    # Base de datos de TESTING (puede ser única para todas las provincias en test)
+    test:
+      jdbc-url: ${TEST_DB_URL}
+      username: ${TEST_DB_USERNAME}
+      password: ${TEST_DB_PASSWORD}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 1
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+        pool-name: Test-Pool
+        leak-detection-threshold: 60000
+# ============================================================================
+# CONFIGURACIÓN E-PAGOS (TESTING - PROXY WRAPPER DE DIEGO)
+# ============================================================================
+# IMPORTANTE: En testing se usa el proxy wrapper de Diego en lugar de
+# conectarse directamente a e-Pagos para evitar afectar el ambiente productivo
+# ============================================================================
+epagos:
+    # URL del proxy wrapper de Diego para testing
+    # Este proxy simula las respuestas de e-Pagos sin hacer llamadas reales
+    url: ${EPAGOS_URL}
+
+    endpoint:
+      rendiciones: /obtenerRendicionFull.php
+      contracargos: /obtenerContracargos
+
+
+  # Configuración de retry
+    max-retries: 2              # Menos reintentos en testing
+    retry-delay: 1000           # 1 segundo entre reintentos
+
+    # Configuración del pool HTTP
+    http:
+      max-connections: 30       # Pool moderado para testing
+      max-connections-per-route: 10
+
+# ============================================================================
+# CONFIGURACIÓN DE LOGGING
+# ============================================================================
+logging:
+  level:
+
+    # Logging de la aplicación (más detallado que prod, menos que dev)
+    org.transito_seguro: DEBUG
+
+    # Logging de SQL (activado para debugging)
+    org.hibernate.SQL: INFO
+    org.hibernate.type.descriptor.sql.BasicBinder: INFO
+
+    # Logging de comunicaciones HTTP/SOAP
+    org.springframework.ws: INFO
+    org.apache.http: INFO
+
+    # Logging de pool de conexiones
+    com.zaxxer.hikari: INFO
+
+    # Spring Framework
+    org.springframework.jdbc: INFO
+    org.springframework.transaction: INFO
+
+
+
+
+

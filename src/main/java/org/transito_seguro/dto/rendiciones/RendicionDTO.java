@@ -6,7 +6,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.transito_seguro.dto.contracargos.ContracargoDTO;
+
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -33,19 +33,19 @@ public class RendicionDTO implements Serializable {
      * Número único de rendición
      */
     @JsonProperty("Numero")
-    private Integer numero;
+    private Long numero;
 
     /**
      * Número secuencial de rendición para el organismo
      */
     @JsonProperty("Secuencia")
-    private Integer secuencia;
+    private Long secuencia;
 
     /**
      * Número de convenio al que pertenece
      */
     @JsonProperty("Convenio")
-    private Integer convenio;
+    private String convenio;
 
     /**
      * Estado de la rendición:

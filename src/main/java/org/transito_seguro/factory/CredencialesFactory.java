@@ -157,6 +157,7 @@ public class CredencialesFactory {
         // Query para obtener configuración activa
         String sql = "SELECT id_concesion, variables, convenio FROM concesion_configuracion_convenio " +
                 "WHERE is_activo = true " +
+                "AND id = 800 " +
                 "AND variables IS NOT NULL " +
                 "AND convenio IS NOT NULL " +
                 "LIMIT 1";
